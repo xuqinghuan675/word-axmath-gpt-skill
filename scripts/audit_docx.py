@@ -41,4 +41,4 @@ if __name__=='__main__':
     ap=argparse.ArgumentParser(); ap.add_argument('--source',required=True); ap.add_argument('--candidate',required=True); ap.add_argument('--out')
     args=ap.parse_args(); report=compare(Path(args.source),Path(args.candidate)); s=json.dumps(report,ensure_ascii=False,indent=2)
     if args.out: Path(args.out).write_text(s,encoding='utf-8')
-    print(s)
+    print(json.dumps(report,ensure_ascii=True,indent=2))
