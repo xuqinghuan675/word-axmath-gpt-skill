@@ -18,7 +18,7 @@ Goal: keep the original DOCX untouched, create an adjacent work area, convert Of
 3. **Convert once** with `python scripts/one_click_convert.py --input "<file-or-folder>"`.
 4. Wait for `READY_FOR_GPT_REVIEW.json`.
 5. **GPT review/repair** the working DOCX against the frozen source.
-6. Final gate: save → close → fresh Word reopen → fresh PDF → one full-page visual review.
+6. Final gate: run `strict_final_compare.py`, fresh-open/export both source and final, generate source-vs-final images for **every page**, verify centered formulas remain centered, then visually inspect every page.
 
 Never overwrite the source. Never close/kill a Word process that this task did not create.
 
@@ -56,6 +56,18 @@ For a source formula proven inline, **inline roundtrip is the first repair**. Do
 - Shared preview targets are risky; do not overwrite shared WMF media unless all formulas are semantically identical.
 - Full-document rendering is reserved for the final gate.
 
+## Strict final source-vs-final gate
+
+Run:
+
+```powershell
+python scripts\strict_final_compare.py --source "<source.docx>" --final "<final.docx>" --outdir "<compare-output>"
+```
+
+The tool fresh-renders both documents, creates a side-by-side image for **every page**, and checks source-centered formulas structurally.
+
+GPT must inspect **every** generated source-vs-final page. This is not optional and must not be replaced by crop sampling or structural checks alone.
+
 ## Done means
 
 - source SHA-256 unchanged;
@@ -65,8 +77,13 @@ For a source formula proven inline, **inline roundtrip is the first repair**. Do
 - unrelated text and paragraph structure preserved;
 - no unresolved source-reference geometry/same-line blockers;
 - paragraph alignment/spacing preserved;
+- **every source-centered formula remains centered**;
+- `center_alignment_breaks = 0` and `center_position_breaks = 0`;
 - no unresolved OLE/preview relationship conflict;
 - no task-created Word/AxMath process remains;
-- fresh reopen + fresh PDF + final full-page visual review passes.
+- fresh reopen + fresh PDF for both source and final;
+- GPT visually inspects every side-by-side page and finds no unexplained change in formula size, baseline, wrapping, line/page breaks, spacing, indentation, or centering.
+
+`structural_pass=true` is required but does **not** replace the visual review.
 
 Ambiguous exceptions are `needs_human_review`; never guess.

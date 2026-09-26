@@ -18,7 +18,7 @@ python -m pip install -r requirements.txt
 
 把 Word 文件路径给 GPT，然后说：
 
-> 先读取这个仓库的 SKILL.md。把这个 Word 的 OfficeMath 转成 AxMath，原文件不要改；先按 Skill 在旁边建立工作区并一键转换，转换完成后继续按 Skill 对照原稿排查和修复，最后做一次 fresh Word/PDF 验收。
+> 先读取这个仓库的 SKILL.md。把这个 Word 的 OfficeMath 转成 AxMath，原文件不要改；先按 Skill 在旁边建立工作区并一键转换，转换完成后继续按 Skill 对照原稿排查和修复。最后必须 fresh Word/PDF 严格逐页对照原稿做视觉比对，不能只抽查；原稿居中的公式最终也必须保持居中。
 
 就可以了。
 
@@ -69,7 +69,8 @@ python -m pip install -r requirements.txt
 - AxMath 内部类型/尺寸异常
 - Word OLE 外框 width/height/baseline 异常
 - preview/OLE 缓存问题
-- 最后重新打开 Word 并导出 PDF 验收
+- 原稿居中的公式转换后偏左/偏右
+- 最后 fresh Word/PDF 与原稿 **逐页严格视觉比对**，不是抽查
 
 其中已经验证过的一条关键修复是：
 
@@ -96,6 +97,7 @@ python -m pip install -r requirements.txt
 - `scripts/repair_axmath_inline_roundtrip.ps1`：行内/display 类型修复
 - `scripts/rebuild_axmath_baselines.ps1`：剩余 AxMath 内部指标重建
 - `scripts/calibrate_axmath_boxes.py`：Word 外部 OLE 框校准
+- `scripts/strict_final_compare.py`：最终 source-vs-final 每页并排图 + 居中结构检查
 
 AxMath 的 `AxMath.dotm` 会从常见 Program Files 位置自动寻找；如果安装在其他位置，GPT 可以给 PowerShell 脚本显式传 `-TemplatePath`。
 

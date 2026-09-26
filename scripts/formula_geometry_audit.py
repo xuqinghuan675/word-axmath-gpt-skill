@@ -77,6 +77,8 @@ def audit(source_snapshot: dict, working_docx: Path):
         "working_count": len(dst),
         "status": "ok",
         "pairs": [],
+        "alignment_breaks": [],
+        "center_alignment_breaks": [],
         "same_line_groups": [],
         "same_line_breaks": [],
         "calibration_plan": [],
@@ -134,6 +136,7 @@ def audit(source_snapshot: dict, working_docx: Path):
                 "source_inline_context": a.get("source_inline_context"),
                 "source_inline_context_strong": a.get("source_inline_context_strong"),
                 "source_inline_reasons": a.get("source_inline_reasons", []),
+                "paragraph_format": a.get("paragraph_format"),
                 "text": a.get("text"),
             },
             "working": {
@@ -143,6 +146,7 @@ def audit(source_snapshot: dict, working_docx: Path):
                 "width_pt": b.get("width_pt"),
                 "height_pt": b.get("height_pt"),
                 "paragraph_start": b.get("paragraph_start"),
+                "paragraph_format": b.get("paragraph_format"),
             },
             "width_ratio": ratio,
             "width_ratio_residual": residual,
@@ -150,6 +154,29 @@ def audit(source_snapshot: dict, working_docx: Path):
         }
         report["pairs"].append(row)
         by_ord[ordinal] = row
+
+        source_fmt = a.get("paragraph_format") or {}
+        working_fmt = b.get("paragraph_format") or {}
+        source_alignment = source_fmt.get("alignment")
+        working_alignment = working_fmt.get("alignment")
+        if (
+            source_alignment is not None
+            and working_alignment is not None
+            and int(source_alignment) != int(working_alignment)
+        ):
+            rec = {
+                "ordinal": ordinal,
+                "source_alignment": source_alignment,
+                "working_alignment": working_alignment,
+                "source_page": a.get("page"),
+                "working_page": b.get("page"),
+                "source_paragraph_start": a.get("paragraph_start"),
+                "working_paragraph_start": b.get("paragraph_start"),
+            }
+            report["alignment_breaks"].append(rec)
+            # Word WdParagraphAlignment: wdAlignParagraphCenter == 1.
+            if int(source_alignment) == 1:
+                report["center_alignment_breaks"].append(rec)
 
     broken_members = set()
     for group in _source_same_line_groups(src):
@@ -237,6 +264,10 @@ def audit(source_snapshot: dict, working_docx: Path):
         g for g in report["same_line_breaks"]
         if not any(o in report["calibration_ordinals"] for o in g["ordinals"])
     ]
+    report["strict_layout_ok"] = bool(
+        not report["center_alignment_breaks"]
+        and not report["unresolved_same_line_breaks"]
+    )
     return report
 
 
@@ -256,6 +287,9 @@ def main():
         "working_count": report["working_count"],
         "reliable_pairs": report.get("learned_geometry", {}).get("reliable_pair_count"),
         "same_line_breaks": len(report.get("same_line_breaks", [])),
+        "alignment_breaks": len(report.get("alignment_breaks", [])),
+        "center_alignment_breaks": len(report.get("center_alignment_breaks", [])),
+        "strict_layout_ok": report.get("strict_layout_ok"),
         "calibration_count": len(report.get("calibration_plan", [])),
         "calibration_ordinals": report.get("calibration_ordinals", []),
         "unresolved_same_line_breaks": len(report.get("unresolved_same_line_breaks", [])),
