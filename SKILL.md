@@ -44,6 +44,33 @@ Classify first; do not try every repair in sequence.
 
 For a source formula proven inline, **inline roundtrip is the first repair**. Do not waste time first on repeated rebuilds, arbitrary width thresholds, shell-only resizing, or preview swapping.
 
+## Mandatory repair state machine
+
+The repair routing above is a **hard execution order**, not a menu of experiments.
+
+1. Freeze source evidence and build one repair plan.
+2. Repair confirmed **Class A** source-inline defects with `repair_axmath_inline_roundtrip.ps1`.
+3. Re-audit. Only defects still proven to be **Class B** may use rebuild/baseline repair.
+4. Re-audit. Only defects proven to be **Class C** external Word OLE-box mismatches may use `calibrate_axmath_boxes.py`.
+5. Class D preview-only and Class E semantic repairs remain isolated to their own evidence.
+6. When blockers reach zero, run the strict final gate and inspect every page.
+
+Do **not** leave this state machine merely because the document page count differs from the source. Page count is an acceptance result, not an optimization target.
+
+Unless the current class's prescribed repair has failed with reproducible evidence, the following are prohibited on a formal document:
+
+- global width/height percentage sweeps;
+- global `w:position` percentage sweeps or forcing `w:position=0`;
+- arbitrary per-formula width thresholds or repeated one-by-one size probes;
+- shrinking OLE shells merely to force the source page count;
+- preview crop/swap experiments used to solve internal AxMath metrics;
+- choosing a repair because it makes the page count look right.
+
+If the prescribed route fails, stop mutation first. Re-read this Skill and the current evidence, then research the generic mechanism (official Word/OLE documentation and public implementation experience) before adding a new repair. Validate the generic fix on the formal document, then update the Skill; never turn the formal document into a parameter-search sandbox.
+
+A detector failure is not permission to start geometry experiments. Fix the detector, regenerate source evidence, rebuild the repair plan, then resume at the correct class.
+
+
 ## Review rules
 
 - `snapshot_docx.py` is the source-reference evidence collector.
