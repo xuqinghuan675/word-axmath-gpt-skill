@@ -71,6 +71,7 @@ python -m pip install -r requirements.txt
 - preview/OLE 缓存问题
 - 原稿居中的公式转换后偏左/偏右
 - 最后 fresh Word/PDF 与原稿 **逐页严格视觉比对**，不是抽查
+- 最终视觉通过会绑定 source/final DOCX 哈希和每页并排图哈希；文件之后变化，旧视觉通过自动失效
 
 其中已经验证过的一条关键修复是：
 
@@ -80,7 +81,7 @@ python -m pip install -r requirements.txt
 
 ## 安全规则
 
-- 不覆盖原始 DOCX
+- 不覆盖原始 DOCX；所有写入脚本都拒绝 input=output，已有输出默认也不覆盖
 - 如果已经有 Word 在运行，后台自动转换直接停止，不碰现有 Word
 - 只清理由本任务自己创建的 Word 进程
 - 不靠固定宽度阈值判断公式是否正确
@@ -97,7 +98,9 @@ python -m pip install -r requirements.txt
 - `scripts/repair_axmath_inline_roundtrip.ps1`：行内/display 类型修复
 - `scripts/rebuild_axmath_baselines.ps1`：剩余 AxMath 内部指标重建
 - `scripts/calibrate_axmath_boxes.py`：Word 外部 OLE 框校准
-- `scripts/strict_final_compare.py`：最终 source-vs-final 每页并排图 + 居中结构检查
+- `scripts/strict_final_compare.py`：最终 source-vs-final 每页并排图 + 内容/结构诊断 + 视觉复核模板
+- `scripts/finalize_visual_review.py`：校验逐页视觉复核清单与文件/图片哈希，只有它输出 `acceptance_pass=true` 才算最终通过
+- `scripts/repo_selfcheck.py`：跨平台静态自检，检查 Python 语法和关键安全/验收契约
 
 AxMath 的 `AxMath.dotm` 会从常见 Program Files 位置自动寻找；如果安装在其他位置，GPT 可以给 PowerShell 脚本显式传 `-TemplatePath`。
 
