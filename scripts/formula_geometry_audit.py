@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import statistics
@@ -8,6 +9,14 @@ from pathlib import Path
 
 from snapshot_docx import _axmath_layout_inventory, _collect_com_inventory
 from word_runtime import OwnedWord
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _median(values):
@@ -87,8 +96,11 @@ def audit(source_snapshot: dict, working_docx: Path):
     layout_by_ord = {int(x["ordinal"]): x for x in layout}
 
     report = {
+        "schema": "axmath-geometry-audit/v2",
         "source_snapshot": source_snapshot.get("source"),
+        "source_sha256": source_snapshot.get("docx_sha256"),
         "working_docx": str(working_docx.resolve()),
+        "working_sha256": _sha256_file(working_docx),
         "word_session": session,
         "source_count": len(src),
         "working_count": len(dst),
@@ -272,15 +284,19 @@ def audit(source_snapshot: dict, working_docx: Path):
                 # inconsistency. Re-derive them from the calibrated shell.
                 "target_dxa_orig": int(round(target_width * 20.0)),
                 "target_dya_orig": int(round(float(current_height) * scale * 20.0)),
-                "auto_apply": True,
+                "auto_apply": False,
+                "requires_visual_confirmation": True,
             }
             report["calibration_plan"].append(plan)
 
     report["calibration_ordinals"] = [x["ordinal"] for x in report["calibration_plan"]]
-    report["unresolved_same_line_breaks"] = [
+    report["planned_same_line_breaks"] = [
         g for g in report["same_line_breaks"]
-        if not any(o in report["calibration_ordinals"] for o in g["ordinals"])
+        if any(o in report["calibration_ordinals"] for o in g["ordinals"])
     ]
+    # A proposed calibration is not a completed repair. Keep the group unresolved
+    # until a later fresh audit or direct visual review proves it fixed.
+    report["unresolved_same_line_breaks"] = list(report["same_line_breaks"])
     report["strict_layout_ok"] = bool(
         not report["center_alignment_breaks"]
         and not report["unresolved_same_line_breaks"]
