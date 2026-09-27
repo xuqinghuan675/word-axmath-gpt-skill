@@ -46,11 +46,15 @@ def _ensure_rpr(run):
 
 
 def _validate_plan_binding(input_docx: Path, plan_report: dict) -> None:
+    if plan_report.get("schema") != "axmath-geometry-audit/v2":
+        raise RuntimeError("Unsupported or unbound calibration plan; regenerate the geometry audit.")
     expected_path = plan_report.get("working_docx")
-    if expected_path and Path(expected_path).resolve() != input_docx.resolve():
-        raise RuntimeError("Calibration plan was generated for a different working DOCX.")
     expected_hash = plan_report.get("working_sha256")
-    if expected_hash and _sha256_file(input_docx) != expected_hash:
+    if not expected_path or not expected_hash:
+        raise RuntimeError("Calibration plan is missing working path/hash binding; regenerate it.")
+    if Path(expected_path).resolve() != input_docx.resolve():
+        raise RuntimeError("Calibration plan was generated for a different working DOCX.")
+    if _sha256_file(input_docx) != expected_hash:
         raise RuntimeError("Calibration plan is stale: working DOCX hash no longer matches.")
 
 
@@ -71,14 +75,13 @@ def apply_plan(
     plan_report: dict,
     selected_ordinals: set[int] | None = None,
     *,
-    allow_in_place: bool = False,
     overwrite: bool = False,
 ):
     input_docx = input_docx.resolve()
     output_docx = output_docx.resolve()
     if not input_docx.is_file():
         raise FileNotFoundError(input_docx)
-    if input_docx == output_docx and not allow_in_place:
+    if input_docx == output_docx:
         raise RuntimeError("Refusing in-place OLE calibration; use a new output DOCX.")
     if output_docx.exists() and input_docx != output_docx and not overwrite:
         raise FileExistsError(f"Output already exists: {output_docx}")
@@ -199,12 +202,9 @@ def apply_plan(
         with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
             for name, data in files.items():
                 z.writestr(name, data)
-        if input_docx == output_docx:
-            os.replace(tmp, output_docx)
-        else:
-            if output_docx.exists() and overwrite:
-                output_docx.unlink()
-            os.replace(tmp, output_docx)
+        if output_docx.exists() and overwrite:
+            output_docx.unlink()
+        os.replace(tmp, output_docx)
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -224,7 +224,6 @@ def main():
     ap.add_argument("--plan", required=True)
     ap.add_argument("--output", required=True)
     ap.add_argument("--ordinals", help="Comma-separated, visually confirmed calibration ordinals")
-    ap.add_argument("--allow-in-place", action="store_true")
     ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--report")
     args = ap.parse_args()
@@ -235,7 +234,6 @@ def main():
         Path(args.output),
         plan,
         _parse_ordinals(args.ordinals),
-        allow_in_place=args.allow_in_place,
         overwrite=args.overwrite,
     )
     if args.report:
