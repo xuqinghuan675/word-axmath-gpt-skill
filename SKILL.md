@@ -44,6 +44,22 @@ Classify first; do not try every repair in sequence.
 
 For a source formula proven inline, **inline roundtrip is the first repair**. Do not waste time first on repeated rebuilds, arbitrary width thresholds, shell-only resizing, or preview swapping.
 
+## Authority and evidence order
+
+For every formal Word/AxMath task, use this authority order:
+
+1. **The user's current explicit instruction.**
+2. **The current authoritative Skill file and its named scripts.**
+3. **Current, freshly collected evidence from the real source/working files and tool output.**
+4. Earlier generated reports only after their inputs, detector version, and provenance are revalidated.
+5. Previous chat messages, handoff summaries, assistant explanations, remembered conclusions, and speculative diagnoses are **not evidence**.
+
+Never promote a previous assistant's statement such as "this bug was verified", "this formula is inline", "the detector is wrong", or "this repair worked" into a code/Skill change without independently checking the underlying evidence in the current task.
+
+When the machine or source document is unavailable, do **not** modify executable repair/detector code based only on old chat claims. Documentation may be hardened from the user's explicit process requirements, but implementation changes must wait for reproducible evidence or independent public/official corroboration.
+
+If a prior assistant's narrative conflicts with the current Skill, follow the current Skill. If current tool evidence conflicts with an old report, refresh the report. Never let a handoff summary silently override the user's written procedure.
+
 ## Mandatory repair state machine
 
 The repair routing above is a **hard execution order**, not a menu of experiments.
