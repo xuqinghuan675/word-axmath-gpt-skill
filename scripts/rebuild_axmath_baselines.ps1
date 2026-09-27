@@ -3,9 +3,15 @@ param(
   [Parameter(Mandatory=$true)][string]$OutputDocx,
   [Parameter(Mandatory=$true)][string]$Ordinals,
   [string]$TemplatePath='',
-  [string]$ReportPath=''
+  [string]$ReportPath='',
+  [switch]$OverwriteOutput
 )
 $ErrorActionPreference='Stop'
+$InputFull=[IO.Path]::GetFullPath($InputDocx)
+$OutputFull=[IO.Path]::GetFullPath($OutputDocx)
+if([string]::Equals($InputFull,$OutputFull,[StringComparison]::OrdinalIgnoreCase)){throw 'Refusing to overwrite the input DOCX.'}
+if(-not (Test-Path -LiteralPath $InputFull)){throw "Input DOCX not found: $InputFull"}
+if((Test-Path -LiteralPath $OutputFull) -and -not $OverwriteOutput){throw "Output already exists: $OutputFull. Use -OverwriteOutput only for an intentional intermediate replacement."}
 function Resolve-AxMathTemplate {
   param([string]$Requested)
   if(-not [string]::IsNullOrWhiteSpace($Requested)){
