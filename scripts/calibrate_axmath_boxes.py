@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import re
-import shutil
 import tempfile
 import zipfile
 from pathlib import Path
@@ -16,6 +17,14 @@ NS = {
     "v": "urn:schemas-microsoft-com:vml",
 }
 W = "{%s}" % NS["w"]
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _replace_style_dimension(style: str, name: str, value_pt: float):
@@ -36,16 +45,68 @@ def _ensure_rpr(run):
     return rpr
 
 
-def apply_plan(input_docx: Path, output_docx: Path, plan_report: dict):
-    plan = {
-        int(row["ordinal"]): row
-        for row in plan_report.get("calibration_plan", [])
-        if row.get("auto_apply")
-    }
+def _validate_plan_binding(input_docx: Path, plan_report: dict) -> None:
+    expected_path = plan_report.get("working_docx")
+    if expected_path and Path(expected_path).resolve() != input_docx.resolve():
+        raise RuntimeError("Calibration plan was generated for a different working DOCX.")
+    expected_hash = plan_report.get("working_sha256")
+    if expected_hash and _sha256_file(input_docx) != expected_hash:
+        raise RuntimeError("Calibration plan is stale: working DOCX hash no longer matches.")
+
+
+def _parse_ordinals(raw: str | None) -> set[int]:
+    if not raw:
+        return set()
+    out: set[int] = set()
+    for token in raw.split(","):
+        token = token.strip()
+        if token:
+            out.add(int(token))
+    return out
+
+
+def apply_plan(
+    input_docx: Path,
+    output_docx: Path,
+    plan_report: dict,
+    selected_ordinals: set[int] | None = None,
+    *,
+    allow_in_place: bool = False,
+    overwrite: bool = False,
+):
+    input_docx = input_docx.resolve()
+    output_docx = output_docx.resolve()
+    if not input_docx.is_file():
+        raise FileNotFoundError(input_docx)
+    if input_docx == output_docx and not allow_in_place:
+        raise RuntimeError("Refusing in-place OLE calibration; use a new output DOCX.")
+    if output_docx.exists() and input_docx != output_docx and not overwrite:
+        raise FileExistsError(f"Output already exists: {output_docx}")
+
+    _validate_plan_binding(input_docx, plan_report)
+    selected_ordinals = set(selected_ordinals or [])
+
+    rows = plan_report.get("calibration_plan", [])
+    plan: dict[int, dict] = {}
+    for row in rows:
+        ordinal = int(row["ordinal"])
+        if selected_ordinals:
+            if ordinal not in selected_ordinals:
+                continue
+        elif not row.get("auto_apply"):
+            continue
+        plan[ordinal] = row
+
+    if selected_ordinals:
+        missing = sorted(selected_ordinals - set(plan))
+        if missing:
+            raise RuntimeError(f"Selected ordinals are absent from calibration plan: {missing}")
+
     if not plan:
-        if input_docx.resolve() != output_docx.resolve():
-            shutil.copy2(input_docx, output_docx)
-        return {"applied": [], "count": 0, "output": str(output_docx.resolve())}
+        raise RuntimeError(
+            "No calibration rows selected. Geometry recommendations require explicit visual confirmation; "
+            "pass --ordinals after reviewing the affected formulas."
+        )
 
     with zipfile.ZipFile(input_docx, "r") as z:
         files = {info.filename: z.read(info.filename) for info in z.infolist()}
@@ -72,6 +133,11 @@ def apply_plan(input_docx: Path, output_docx: Path, plan_report: dict):
         if run is None:
             raise RuntimeError(f"AxMath ordinal {ordinal} has no parent run")
 
+        target_width = float(row["target_width_pt"])
+        target_height = float(row["target_height_pt"])
+        if target_width <= 0 or target_height <= 0:
+            raise RuntimeError(f"AxMath ordinal {ordinal} has invalid target dimensions")
+
         before = {
             "style": shape.get("style"),
             "dxaOrig": obj.get(W + "dxaOrig"),
@@ -84,8 +150,8 @@ def apply_plan(input_docx: Path, output_docx: Path, plan_report: dict):
             before["position"] = pos.get(W + "val")
 
         style = shape.get("style") or ""
-        style = _replace_style_dimension(style, "width", float(row["target_width_pt"]))
-        style = _replace_style_dimension(style, "height", float(row["target_height_pt"]))
+        style = _replace_style_dimension(style, "width", target_width)
+        style = _replace_style_dimension(style, "height", target_height)
         shape.set("style", style)
         obj.set(W + "dxaOrig", str(int(row["target_dxa_orig"])))
         obj.set(W + "dyaOrig", str(int(row["target_dya_orig"])))
@@ -120,25 +186,33 @@ def apply_plan(input_docx: Path, output_docx: Path, plan_report: dict):
         root, xml_declaration=True, encoding="UTF-8", standalone="yes"
     )
 
+    input_sha256 = _sha256_file(input_docx)
     output_docx.parent.mkdir(parents=True, exist_ok=True)
-    same = input_docx.resolve() == output_docx.resolve()
-    if same:
-        tmp = Path(tempfile.mkstemp(prefix="axmath-calibrated-", suffix=".docx")[1])
-    else:
-        tmp = output_docx
+    fd, tmp_name = tempfile.mkstemp(
+        prefix="axmath-calibrated-",
+        suffix=".docx",
+        dir=str(output_docx.parent),
+    )
+    os.close(fd)
+    tmp = Path(tmp_name)
     try:
         with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
             for name, data in files.items():
                 z.writestr(name, data)
-        if same:
-            shutil.move(str(tmp), str(output_docx))
+        if input_docx == output_docx:
+            os.replace(tmp, output_docx)
+        else:
+            if output_docx.exists() and overwrite:
+                output_docx.unlink()
+            os.replace(tmp, output_docx)
     finally:
-        if same and tmp.exists():
-            tmp.unlink(missing_ok=True)
+        tmp.unlink(missing_ok=True)
 
     return {
-        "input": str(input_docx.resolve()),
-        "output": str(output_docx.resolve()),
+        "input": str(input_docx),
+        "input_sha256": input_sha256,
+        "output": str(output_docx),
+        "output_sha256": _sha256_file(output_docx),
         "applied": applied,
         "count": len(applied),
     }
@@ -149,17 +223,28 @@ def main():
     ap.add_argument("--input", required=True)
     ap.add_argument("--plan", required=True)
     ap.add_argument("--output", required=True)
+    ap.add_argument("--ordinals", help="Comma-separated, visually confirmed calibration ordinals")
+    ap.add_argument("--allow-in-place", action="store_true")
+    ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--report")
     args = ap.parse_args()
 
     plan = json.loads(Path(args.plan).read_text(encoding="utf-8-sig"))
-    result = apply_plan(Path(args.input).resolve(), Path(args.output).resolve(), plan)
+    result = apply_plan(
+        Path(args.input),
+        Path(args.output),
+        plan,
+        _parse_ordinals(args.ordinals),
+        allow_in_place=args.allow_in_place,
+        overwrite=args.overwrite,
+    )
     if args.report:
         Path(args.report).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({
         "count": result["count"],
         "ordinals": [x["ordinal"] for x in result["applied"]],
         "output": result["output"],
+        "output_sha256": result["output_sha256"],
     }, ensure_ascii=True, indent=2))
     return 0
 
