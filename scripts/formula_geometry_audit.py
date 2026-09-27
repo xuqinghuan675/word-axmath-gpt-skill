@@ -33,6 +33,23 @@ def _source_same_line_groups(rows, tolerance_pt: float = 1.5):
         members = sorted(members, key=lambda r: int(r.get("ordinal") or 0))
         current = []
         for row in members:
+            # A source OfficeMath range may start on one visual line and end on
+            # the next. Such a formula is internally multiline, so formulas
+            # sharing only its start-y are not a hard same-line constraint for
+            # an indivisible AxMath OLE object.
+            start_y = row.get("y_pt")
+            end_y = row.get("end_y_pt")
+            source_multiline = bool(
+                start_y is not None
+                and end_y is not None
+                and abs(float(end_y) - float(start_y)) > tolerance_pt
+            )
+            if source_multiline:
+                if len(current) >= 2:
+                    groups.append(current)
+                current = []
+                continue
+
             if not current:
                 current = [row]
                 continue
@@ -53,7 +70,7 @@ def _source_same_line_groups(rows, tolerance_pt: float = 1.5):
 def _collect_working_inventory(docx: Path):
     session_meta = None
     with OwnedWord(visible=False, require_clean=True) as (word, meta):
-        doc = word.Documents.Open(str(docx), ReadOnly=True, AddToRecentFiles=False)
+        doc = word.Documents.OpenNoRepairDialog(str(docx), False, True, False)
         try:
             inventory = _collect_com_inventory(doc)
         finally:
