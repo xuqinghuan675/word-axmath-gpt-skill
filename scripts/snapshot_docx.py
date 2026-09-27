@@ -46,22 +46,12 @@ def _page_info(rng):
 
 
 def _range_visual_geometry(rng, y_tolerance_pt: float = 1.5):
-    """Measure a Word range using collapsed start/end layout coordinates.
-
-    Word's Range.Information on a non-collapsed range is not a stable start
-    coordinate for complex OfficeMath. Always collapse explicit duplicates at
-    both ends before measuring geometry.
-    """
+    """Measure a Word range using Word's own laid-out start/end coordinates."""
+    start = _page_info(rng)
     try:
-        start_rng = rng.Duplicate
-        start_rng.Collapse(1)  # wdCollapseStart
-        start = _page_info(start_rng)
-    except Exception:
-        start = _page_info(rng)
-    try:
-        end_rng = rng.Duplicate
-        end_rng.Collapse(0)  # wdCollapseEnd
-        end = _page_info(end_rng)
+        collapsed = rng.Duplicate
+        collapsed.Collapse(0)  # wdCollapseEnd
+        end = _page_info(collapsed)
     except Exception:
         end = None
 
@@ -689,8 +679,7 @@ def snapshot(docx: Path, outdir: Path, label: str | None = None):
 
     session_meta = None
     with OwnedWord(visible=False, require_clean=True) as (word, meta):
-        # Read-only snapshots must not stall on Word's interactive recovery prompt.
-        doc = word.Documents.OpenNoRepairDialog(str(docx), False, True, False)
+        doc = word.Documents.Open(str(docx), ReadOnly=True, AddToRecentFiles=False)
         try:
             report["pages_word"] = int(doc.ComputeStatistics(2))
             report["words"] = int(doc.ComputeStatistics(0))
