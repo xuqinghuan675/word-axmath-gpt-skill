@@ -28,6 +28,8 @@ function Resolve-AxMathTemplate {
 }
 $TemplatePath=Resolve-AxMathTemplate $TemplatePath
 if([string]::IsNullOrWhiteSpace($ReportPath)){$ReportPath=$OutputDocx+'.rebuild.json'}
+$ReportFull=[IO.Path]::GetFullPath($ReportPath)
+if([string]::Equals($ReportFull,$InputFull,[StringComparison]::OrdinalIgnoreCase) -or [string]::Equals($ReportFull,$OutputFull,[StringComparison]::OrdinalIgnoreCase)){throw 'ReportPath must not point to the input or output DOCX.'}
 $targets=@($Ordinals -split ',' | ForEach-Object { if($_.Trim()){ [int]$_.Trim() } } | Sort-Object -Unique -Descending)
 if($targets.Count -eq 0){throw 'No ordinals supplied.'}
 
