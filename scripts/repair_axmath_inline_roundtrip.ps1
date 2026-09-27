@@ -28,6 +28,8 @@ function Resolve-AxMathTemplate {
 }
 $TemplatePath=Resolve-AxMathTemplate $TemplatePath
 if([string]::IsNullOrWhiteSpace($ReportPath)){$ReportPath=$OutputDocx+'.inline-roundtrip.json'}
+$ReportFull=[IO.Path]::GetFullPath($ReportPath)
+if([string]::Equals($ReportFull,$InputFull,[StringComparison]::OrdinalIgnoreCase) -or [string]::Equals($ReportFull,$OutputFull,[StringComparison]::OrdinalIgnoreCase)){throw 'ReportPath must not point to the input or output DOCX.'}
 $targets=@($Ordinals -split ',' | ForEach-Object { if($_.Trim()){ [int]$_.Trim() } } | Sort-Object -Descending -Unique)
 if($targets.Count -eq 0){throw 'No ordinals supplied.'}
 $res=[ordered]@{input=$InputDocx;output=$OutputDocx;targets=$targets;macro_out='AMSAM2TeX';macro_in='AMSTeX2AM';repairs=@();failed=@();success=$false}
