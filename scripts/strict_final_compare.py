@@ -214,6 +214,13 @@ def compare(
         outdir / "side_by_side",
     )
     report["side_by_side_pages"] = [x["path"] for x in report["side_by_side_inventory"]]
+    expected_visual_pages = {
+        int(p["page"]) for p in source_snapshot.get("pages", [])
+    } | {
+        int(p["page"]) for p in final_snapshot.get("pages", [])
+    }
+    actual_visual_pages = {int(x["page"]) for x in report["side_by_side_inventory"]}
+    report["visual_evidence_complete"] = bool(expected_visual_pages) and actual_visual_pages == expected_visual_pages
 
     report["structural_pass"] = bool(
         report["page_count_equal"]
@@ -229,6 +236,9 @@ def compare(
         and report["final_omath_count"] == 0
         and report["paragraph_count_equal"]
         and report["nonmath_text_exact"]
+        and source_snapshot.get("status") == "ready"
+        and final_snapshot.get("status") == "ready"
+        and report["visual_evidence_complete"]
     )
     report["acceptance_status"] = (
         "awaiting_visual_review" if report["hard_content_pass"] else "hard_content_failed"
@@ -271,6 +281,7 @@ def main() -> int:
         "final_omath_count": report["final_omath_count"],
         "paragraph_count_equal": report["paragraph_count_equal"],
         "nonmath_text_exact": report["nonmath_text_exact"],
+        "visual_evidence_complete": report["visual_evidence_complete"],
         "center_alignment_breaks": len(report["center_alignment_breaks"]),
         "center_position_breaks": len(report["center_position_breaks"]),
         "structural_pass": report["structural_pass"],
