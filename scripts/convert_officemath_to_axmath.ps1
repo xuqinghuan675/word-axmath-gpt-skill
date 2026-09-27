@@ -29,6 +29,14 @@ function Resolve-AxMathTemplate {
 $TemplatePath=Resolve-AxMathTemplate $TemplatePath
 if([string]::IsNullOrWhiteSpace($ReportPath)){$ReportPath=$OutputDocx+'.conversion.json'}
 if([string]::IsNullOrWhiteSpace($ControlPath)){$ControlPath=$OutputDocx+'.control.json'}
+$ReportFull=[IO.Path]::GetFullPath($ReportPath)
+$ControlFull=[IO.Path]::GetFullPath($ControlPath)
+foreach($pair in @(@('ReportPath',$ReportFull),@('ControlPath',$ControlFull))){
+  if([string]::Equals($pair[1],$InputFull,[StringComparison]::OrdinalIgnoreCase) -or [string]::Equals($pair[1],$OutputFull,[StringComparison]::OrdinalIgnoreCase)){
+    throw "$($pair[0]) must not point to the input or output DOCX."
+  }
+}
+if([string]::Equals($ReportFull,$ControlFull,[StringComparison]::OrdinalIgnoreCase)){throw 'ReportPath and ControlPath must be different files.'}
 
 $key='HKCU:\Software\AxMath\WordCmds'
 $result=[ordered]@{
