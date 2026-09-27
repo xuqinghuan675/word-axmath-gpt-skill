@@ -90,7 +90,7 @@ A detector failure is not permission to start geometry experiments. Fix the dete
 ## Review rules
 
 - `snapshot_docx.py` is the source-reference evidence collector.
-- `formula_geometry_audit.py` compares source OfficeMath and working AxMath by ordinal and geometry.
+- `formula_geometry_audit.py` compares source OfficeMath and working AxMath by ordinal and geometry. Its output is **diagnostic/triage evidence**, not an automatic reason to keep modifying a document that already matches visually.
 - Repair in grouped passes, preferably descending ordinals.
 - Re-resolve current ordinal/text anchors after edits; Word Range coordinates can drift.
 - Formula crop pixel differences are triage only, not proof.
@@ -107,9 +107,11 @@ Run:
 python scripts\strict_final_compare.py --source "<source.docx>" --final "<final.docx>" --outdir "<compare-output>"
 ```
 
-The tool fresh-renders both documents, creates a side-by-side image for **every page**, and checks source-centered formulas structurally.
+The tool fresh-renders both documents, creates a side-by-side image for **every page**, and also reports structural diagnostics.
 
-GPT must inspect **every** generated source-vs-final page. This is not optional and must not be replaced by crop sampling or structural checks alone.
+**Visual layout is the final acceptance authority.** Structural geometry, same-line, centering, crop, shell, and baseline diagnostics exist to direct attention to suspicious areas; they must not trigger further mutation by themselves when the corresponding source-vs-final pages are visually correct.
+
+GPT must inspect **every** generated source-vs-final page. This is not optional and must not be replaced by crop sampling or structural checks alone. If a structural warning remains but the relevant page is visually indistinguishable in layout and formula placement, record the warning as non-blocking rather than repeatedly resizing/rebuilding the formula.
 
 ## Done means
 
@@ -118,15 +120,15 @@ GPT must inspect **every** generated source-vs-final page. This is not optional 
 - residual OfficeMath = 0;
 - genuine `Equation.AxMath` count matches the source formula count;
 - unrelated text and paragraph structure preserved;
-- no unresolved source-reference geometry/same-line blockers;
-- paragraph alignment/spacing preserved;
-- **every source-centered formula remains centered**;
-- `center_alignment_breaks = 0` and `center_position_breaks = 0`;
-- no unresolved OLE/preview relationship conflict;
+- no **visually observable** unresolved source-reference layout defect; geometry/same-line warnings may remain when page-level visual inspection confirms no layout difference;
+- paragraph alignment/spacing is visually preserved;
+- **every source-centered formula remains visually centered**;
+- `center_alignment_breaks` / `center_position_breaks` are diagnostic flags, not standalone blockers when the corresponding pages pass visual inspection;
+- no OLE/preview relationship conflict that causes a visible or semantic defect;
 - no task-created Word/AxMath process remains;
 - fresh reopen + fresh PDF for both source and final;
 - GPT visually inspects every side-by-side page and finds no unexplained change in formula size, baseline, wrapping, line/page breaks, spacing, indentation, or centering.
 
-`structural_pass=true` is required but does **not** replace the visual review.
+`structural_pass=true` is preferred, but it is **not required when the only remaining failures are diagnostic geometry/layout warnings and every affected page passes direct visual comparison**. Visual correctness must never be sacrificed merely to make a metric reach zero.
 
 Ambiguous exceptions are `needs_human_review`; never guess.
