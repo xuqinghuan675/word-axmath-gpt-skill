@@ -104,6 +104,7 @@ def write_json(path: Path, value: dict) -> None:
 
 
 def run_conversion(source: Path, doc_dir: Path) -> dict:
+    source_sha_before = sha256_file(source)
     source_dir = doc_dir / "source"
     working_dir = doc_dir / "working"
     logs_dir = doc_dir / "logs"
@@ -113,6 +114,9 @@ def run_conversion(source: Path, doc_dir: Path) -> dict:
 
     frozen_source = source_dir / source.name
     shutil.copy2(source, frozen_source)
+    frozen_source_sha256 = sha256_file(frozen_source)
+    if frozen_source_sha256 != source_sha_before:
+        raise RuntimeError("Frozen source copy hash mismatch; refusing conversion.")
     working = working_dir / f"{source.stem}_AxMath-working.docx"
     log_path = logs_dir / "conversion.log.json"
 
@@ -132,6 +136,8 @@ def run_conversion(source: Path, doc_dir: Path) -> dict:
     })
 
     source_stats = analyze(frozen_source)
+    source_sha_after = sha256_file(source)
+    source_unchanged = source_sha_after == source_sha_before
     candidate_stats = analyze(working) if working.exists() else None
     skill_report_path = Path(str(working) + ".skill-report.json")
     skill_report = None
@@ -150,12 +156,16 @@ def run_conversion(source: Path, doc_dir: Path) -> dict:
         and audit
         and audit.get("paragraph_count_equal")
         and audit.get("nonmath_text_exact")
+        and source_unchanged
     )
     return {
         "status": "converted_ready_for_gpt_review" if success else "conversion_failed",
         "original_source": str(source),
-        "original_source_sha256": sha256_file(source),
+        "original_source_sha256": source_sha_before,
+        "original_source_sha256_after": source_sha_after,
+        "source_unchanged": source_unchanged,
         "frozen_source": str(frozen_source),
+        "frozen_source_sha256": frozen_source_sha256,
         "working_docx": str(working) if working.exists() else None,
         "source_omath": source_stats["omath"],
         "working_omath": candidate_stats["omath"] if candidate_stats else None,
