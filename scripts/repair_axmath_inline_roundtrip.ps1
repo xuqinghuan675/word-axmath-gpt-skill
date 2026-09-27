@@ -3,9 +3,15 @@ param(
   [Parameter(Mandatory=$true)][string]$OutputDocx,
   [Parameter(Mandatory=$true)][string]$Ordinals,
   [string]$TemplatePath='',
-  [string]$ReportPath=''
+  [string]$ReportPath='',
+  [switch]$OverwriteOutput
 )
 $ErrorActionPreference='Stop'
+$InputFull=[IO.Path]::GetFullPath($InputDocx)
+$OutputFull=[IO.Path]::GetFullPath($OutputDocx)
+if([string]::Equals($InputFull,$OutputFull,[StringComparison]::OrdinalIgnoreCase)){throw 'Refusing to overwrite the input DOCX.'}
+if(-not (Test-Path -LiteralPath $InputFull)){throw "Input DOCX not found: $InputFull"}
+if((Test-Path -LiteralPath $OutputFull) -and -not $OverwriteOutput){throw "Output already exists: $OutputFull. Use -OverwriteOutput only for an intentional intermediate replacement."}
 function Resolve-AxMathTemplate {
   param([string]$Requested)
   if(-not [string]::IsNullOrWhiteSpace($Requested)){
@@ -22,7 +28,8 @@ function Resolve-AxMathTemplate {
 }
 $TemplatePath=Resolve-AxMathTemplate $TemplatePath
 if([string]::IsNullOrWhiteSpace($ReportPath)){$ReportPath=$OutputDocx+'.inline-roundtrip.json'}
-$targets=@($Ordinals -split ',' | ForEach-Object{[int]$_.Trim()} | Sort-Object -Descending -Unique)
+$targets=@($Ordinals -split ',' | ForEach-Object { if($_.Trim()){ [int]$_.Trim() } } | Sort-Object -Descending -Unique)
+if($targets.Count -eq 0){throw 'No ordinals supplied.'}
 $res=[ordered]@{input=$InputDocx;output=$OutputDocx;targets=$targets;macro_out='AMSAM2TeX';macro_in='AMSTeX2AM';repairs=@();failed=@();success=$false}
 $word=$null;$doc=$null;$wordPid=$null
 $before=@(Get-Process WINWORD -ErrorAction SilentlyContinue|Select-Object -ExpandProperty Id)
