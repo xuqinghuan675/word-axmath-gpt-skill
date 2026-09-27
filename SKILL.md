@@ -35,6 +35,7 @@ Classify first; do not try every repair in sequence.
 
 - **Only the external Word OLE box is wrong**
   → `calibrate_axmath_boxes.py`, moving width/height + `dxaOrig/dyaOrig` + `w:position` coherently.
+  → Geometry audit rows are recommendations only. Visually confirm the affected formula(s), then pass their ordinals explicitly; do not auto-apply a stale/statistical plan.
 
 - **Preview-only problem**
   → repair/split the preview relationship; do not rewrite the OLE.
@@ -69,7 +70,7 @@ The repair routing above is a **hard execution order**, not a menu of experiment
 3. Re-audit. Only defects still proven to be **Class B** may use rebuild/baseline repair.
 4. Re-audit. Only defects proven to be **Class C** external Word OLE-box mismatches may use `calibrate_axmath_boxes.py`.
 5. Class D preview-only and Class E semantic repairs remain isolated to their own evidence.
-6. When blockers reach zero, run the strict final gate and inspect every page.
+6. When no **visually observed** repair defect remains, run the strict final gate and inspect every page. Diagnostic geometry warnings alone do not justify another mutation.
 
 Do **not** leave this state machine merely because the document page count differs from the source. Page count is an acceptance result, not an optimization target.
 
@@ -101,13 +102,21 @@ A detector failure is not permission to start geometry experiments. Fix the dete
 
 ## Strict final source-vs-final gate
 
-Run:
+Run the evidence pass first, using the frozen pre-conversion source SHA-256:
 
 ```powershell
-python scripts\strict_final_compare.py --source "<source.docx>" --final "<final.docx>" --outdir "<compare-output>"
+python scripts\strict_final_compare.py --source "<source.docx>" --final "<final.docx>" --outdir "<compare-output>" --expected-source-sha256 "<frozen-source-sha256>"
 ```
 
-The tool fresh-renders both documents, creates a side-by-side image for **every page**, and also reports structural diagnostics.
+This command intentionally does **not** return success yet. It fresh-renders both documents, verifies hard content invariants, creates a side-by-side image for **every page**, and writes `VISUAL_REVIEW_TEMPLATE.json`.
+
+After GPT has directly inspected **every** side-by-side page, fill a copy of that template from the actual visual review and finalize it:
+
+```powershell
+python scripts\finalize_visual_review.py --report "<compare-output>\STRICT_FINAL_COMPARE.json" --review "<compare-output>\VISUAL_REVIEW.json"
+```
+
+Only `acceptance_pass=true` from the finalizer is a completed final gate. The review is hash-bound to the source, final DOCX, and every reviewed page image, so a stale visual pass cannot survive later file changes.
 
 **Visual layout is the final acceptance authority.** Structural geometry, same-line, centering, crop, shell, and baseline diagnostics exist to direct attention to suspicious areas; they must not trigger further mutation by themselves when the corresponding source-vs-final pages are visually correct.
 
@@ -119,6 +128,7 @@ GPT must inspect **every** generated source-vs-final page. This is not optional 
 - working DOCX opens normally;
 - residual OfficeMath = 0;
 - genuine `Equation.AxMath` count matches the source formula count;
+- hard content gate passes: frozen source SHA matches, source/final stay unchanged during compare, paragraph count matches, and non-math text is exact;
 - unrelated text and paragraph structure preserved;
 - no **visually observable** unresolved source-reference layout defect; geometry/same-line warnings may remain when page-level visual inspection confirms no layout difference;
 - paragraph alignment/spacing is visually preserved;
@@ -129,6 +139,6 @@ GPT must inspect **every** generated source-vs-final page. This is not optional 
 - fresh reopen + fresh PDF for both source and final;
 - GPT visually inspects every side-by-side page and finds no unexplained change in formula size, baseline, wrapping, line/page breaks, spacing, indentation, or centering.
 
-`structural_pass=true` is preferred, but it is **not required when the only remaining failures are diagnostic geometry/layout warnings and every affected page passes direct visual comparison**. Visual correctness must never be sacrificed merely to make a metric reach zero.
+`structural_pass=true` is preferred, but it is **not required when the only remaining failures are diagnostic geometry/layout warnings and every affected page passes direct visual comparison**. Final completion is instead `hard_content_pass=true` plus hash-bound per-page visual review with `acceptance_pass=true`. Visual correctness must never be sacrificed merely to make a metric reach zero.
 
 Ambiguous exceptions are `needs_human_review`; never guess.
