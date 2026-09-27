@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import shutil
@@ -11,6 +12,14 @@ from pathlib import Path
 import psutil
 
 from audit_docx import compare
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _word_pids() -> list[int]:
@@ -28,10 +37,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", required=True)
     ap.add_argument("--output", required=True)
+    ap.add_argument("--overwrite-output", action="store_true")
     args = ap.parse_args()
 
     src = Path(args.input).resolve()
     out = Path(args.output).resolve()
+    if not src.is_file():
+        raise FileNotFoundError(src)
+    if src == out:
+        raise RuntimeError("Refusing to overwrite the input DOCX.")
+    if out.exists() and not args.overwrite_output:
+        raise FileExistsError(f"Output already exists: {out}")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    source_sha_before = _sha256_file(src)
     here = Path(__file__).resolve().parent
     conv = here / "convert_officemath_to_axmath.ps1"
     watcher_script = here / "axmath_batch_dialog_watcher.py"
@@ -67,6 +85,8 @@ def main():
         "-ReportPath", str(conv_report),
         "-ControlPath", str(control),
     ]
+    if args.overwrite_output:
+        cmd.append("-OverwriteOutput")
     p = subprocess.Popen(
         cmd,
         text=True,
@@ -94,8 +114,14 @@ def main():
         watcher_stdout, watcher_stderr = watcher.communicate(timeout=8)
     except subprocess.TimeoutExpired:
         watcher.terminate()
-        watcher_stdout, watcher_stderr = watcher.communicate(timeout=5)
+        try:
+            watcher_stdout, watcher_stderr = watcher.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            watcher.kill()
+            watcher_stdout, watcher_stderr = watcher.communicate()
 
+    source_sha_after = _sha256_file(src)
+    source_unchanged = source_sha_after == source_sha_before
     conversion = None
     if conv_report.exists():
         conversion = json.loads(conv_report.read_text(encoding="utf-8-sig"))
@@ -114,6 +140,9 @@ def main():
         "returncode": p.returncode,
         "conversion": conversion,
         "audit": audit,
+        "source_sha256_before": source_sha_before,
+        "source_sha256_after": source_sha_after,
+        "source_unchanged": source_unchanged,
         "lingering_word_pids": lingering_word,
         "stdout_tail": stdout[-8000:],
         "stderr_tail": stderr[-8000:],
@@ -132,6 +161,7 @@ def main():
         and audit
         and audit.get("paragraph_count_equal")
         and audit.get("nonmath_text_exact")
+        and source_unchanged
     )
     return 0 if ok else 1
 
