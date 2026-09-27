@@ -46,6 +46,10 @@ def finalize(report_path: Path, review_path: Path) -> dict:
 
     inventory = report.get("side_by_side_inventory") or []
     expected = {int(x["page"]): x for x in inventory}
+    if not expected:
+        errors.append("no side-by-side page evidence in compare report")
+    if not report.get("visual_evidence_complete"):
+        errors.append("compare report visual evidence is incomplete")
     reviewed_rows = review.get("pages") or []
     reviewed: dict[int, dict] = {}
     for row in reviewed_rows:
