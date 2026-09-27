@@ -25,6 +25,14 @@ RELNS = {"pr": "http://schemas.openxmlformats.org/package/2006/relationships"}
 W = "{%s}" % NS["w"]
 
 
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def _safe_text(s: str | None) -> str:
     return clean_com_text(s).replace("\r", "\n").replace("\x07", "")
 
@@ -685,7 +693,13 @@ def snapshot(docx: Path, outdir: Path, label: str | None = None):
     outdir = outdir.resolve()
     outdir.mkdir(parents=True, exist_ok=True)
     pdf = outdir / "render.pdf"
-    report = {"source": str(docx), "label": label or docx.stem, "status": "starting"}
+    source_sha256 = _sha256_file(docx)
+    report = {
+        "source": str(docx),
+        "label": label or docx.stem,
+        "status": "starting",
+        "docx_sha256": source_sha256,
+    }
 
     session_meta = None
     with OwnedWord(visible=False, require_clean=True) as (word, meta):
@@ -758,7 +772,9 @@ def snapshot(docx: Path, outdir: Path, label: str | None = None):
                 "shared_ole_target_ordinals": p.get("shared_ole_target_ordinals", []) if p else [],
             })
     report["anomalies"] = anomalies
-    report["status"] = "ready"
+    report["docx_sha256_after"] = _sha256_file(docx)
+    report["docx_stable"] = report["docx_sha256_after"] == source_sha256
+    report["status"] = "ready" if report["docx_stable"] else "changed_during_snapshot"
     out = outdir / "snapshot.json"
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report
@@ -774,6 +790,8 @@ def main():
     print(json.dumps({
         "status": rep["status"],
         "source": rep["source"],
+        "docx_sha256": rep.get("docx_sha256"),
+        "docx_stable": rep.get("docx_stable"),
         "pages": len(rep["pages"]),
         "omath": len(rep["inventory"]["omath"]),
         "axmath": len(rep["inventory"]["axmath"]),
@@ -784,6 +802,7 @@ def main():
         "shared_ole_targets": len(rep.get("relationship_risks", {}).get("shared_ole_targets", [])),
         "snapshot": str(Path(args.outdir).resolve() / "snapshot.json"),
     }, ensure_ascii=True, indent=2))
+    return 0 if rep.get("status") == "ready" else 2
 
 
 if __name__ == "__main__":
