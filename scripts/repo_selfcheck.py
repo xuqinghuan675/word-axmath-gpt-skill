@@ -170,6 +170,9 @@ def main() -> int:
     for needle in ["_performance_summary", '"performance": _performance_summary(conversion)']:
         if needle not in runner:
             errors.append(f"run_skill.py missing performance summary contract: {needle}")
+    for needle in ["owned_word_pid", 'conversion.get("word_pid_owned")', "psutil.pid_exists(owned_word_pid)"]:
+        if needle not in runner:
+            errors.append(f"run_skill.py missing owned-Word leak guard: {needle}")
     if '"performance": performance' not in one_click:
         errors.append("one_click_convert.py does not propagate performance summary")
 

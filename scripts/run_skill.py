@@ -188,13 +188,20 @@ def main():
         conversion = json.loads(conv_report.read_text(encoding="utf-8-sig"))
     audit = compare(src, out) if out.exists() else None
 
-    # Word can linger briefly while COM/OLE tears down. Give only this
-    # automation-created instance a bounded grace period before judging it a leak.
+    # Word can linger briefly while COM/OLE tears down. Judge only the PID that
+    # the converter proved belongs to this run; an unrelated Word session that
+    # starts during conversion must never become a false leak/failure.
+    owned_word_pid = None
+    if conversion and conversion.get("word_pid_owned") and conversion.get("word_pid"):
+        try:
+            owned_word_pid = int(conversion["word_pid"])
+        except (TypeError, ValueError):
+            owned_word_pid = None
     deadline = time.time() + 6.0
-    lingering_word = [pid for pid in _word_pids() if pid not in preexisting_word]
+    lingering_word = [owned_word_pid] if owned_word_pid and psutil.pid_exists(owned_word_pid) else []
     while lingering_word and time.time() < deadline:
         time.sleep(0.25)
-        lingering_word = [pid for pid in _word_pids() if pid not in preexisting_word]
+        lingering_word = [owned_word_pid] if owned_word_pid and psutil.pid_exists(owned_word_pid) else []
 
     report = {
         "runner_seconds": time.perf_counter() - t0,
