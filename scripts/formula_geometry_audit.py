@@ -78,7 +78,7 @@ def _source_same_line_groups(rows, tolerance_pt: float = 1.5):
 
 def _collect_working_inventory(docx: Path):
     session_meta = None
-    with OwnedWord(visible=False, require_clean=True) as (word, meta):
+    with OwnedWord(visible=False, require_clean=False) as (word, meta):
         doc = word.Documents.OpenNoRepairDialog(str(docx), False, True, False)
         try:
             inventory = _collect_com_inventory(doc)
@@ -110,6 +110,10 @@ def audit(source_snapshot: dict, working_docx: Path):
         "center_alignment_breaks": [],
         "same_line_groups": [],
         "same_line_breaks": [],
+        "semantic_rebuild_candidates": [],
+        "semantic_rebuild_ordinals": [],
+        "roundtrip_semantic_risk_candidates": [],
+        "roundtrip_semantic_risk_ordinals": [],
         "calibration_plan": [],
         "calibration_ordinals": [],
     }
@@ -184,6 +188,27 @@ def audit(source_snapshot: dict, working_docx: Path):
         report["pairs"].append(row)
         by_ord[ordinal] = row
 
+        # A tiny shell is legitimate for a single glyph such as x, 0 or alpha.
+        # It is suspicious when the frozen source at the same ordinal contains
+        # a non-trivial expression. This is triage only; GPT must visually or
+        # semantically confirm the item before a Class E source rebuild.
+        source_text_compact = "".join(str(a.get("text") or "").split())
+        if (
+            b.get("width_pt") is not None
+            and float(b["width_pt"]) <= 10.0
+            and len(source_text_compact) > 1
+        ):
+            report["semantic_rebuild_candidates"].append({
+                "ordinal": ordinal,
+                "reason": "nontrivial_source_in_tiny_axmath_shell",
+                "source_text": a.get("text"),
+                "source_text_compact_length": len(source_text_compact),
+                "working_width_pt": float(b["width_pt"]),
+                "working_height_pt": b.get("height_pt"),
+                "requires_visual_confirmation": True,
+                "auto_apply": False,
+            })
+
         source_fmt = a.get("paragraph_format") or {}
         working_fmt = b.get("paragraph_format") or {}
         source_alignment = source_fmt.get("alignment")
@@ -233,6 +258,24 @@ def audit(source_snapshot: dict, working_docx: Path):
         if broken:
             report["same_line_breaks"].append(rec)
             broken_members.update(ordinals)
+
+    # AxMath -> TeX roundtrip has been observed to drop prime/derivative
+    # semantics while still yielding a syntactically valid donor. Flag those
+    # members of broken same-line groups so GPT prefers frozen-source semantic
+    # rebuild instead of blindly roundtripping the working AxMath object.
+    prime_chars = {"′", "″", "‴", "⁗"}
+    for ordinal in sorted(broken_members):
+        row = by_ord.get(ordinal)
+        if not row:
+            continue
+        source_text = str(row["source"].get("text") or "")
+        if any(ch in source_text for ch in prime_chars):
+            report["roundtrip_semantic_risk_candidates"].append({
+                "ordinal": ordinal,
+                "reason": "source_contains_prime_or_derivative_marker",
+                "source_text": source_text,
+                "preferred_route": "source_semantic_rebuild",
+            })
 
     if center is not None:
         for row in report["pairs"]:
@@ -290,6 +333,12 @@ def audit(source_snapshot: dict, working_docx: Path):
             report["calibration_plan"].append(plan)
 
     report["calibration_ordinals"] = [x["ordinal"] for x in report["calibration_plan"]]
+    report["semantic_rebuild_ordinals"] = [
+        x["ordinal"] for x in report["semantic_rebuild_candidates"]
+    ]
+    report["roundtrip_semantic_risk_ordinals"] = [
+        x["ordinal"] for x in report["roundtrip_semantic_risk_candidates"]
+    ]
     report["planned_same_line_breaks"] = [
         g for g in report["same_line_breaks"]
         if any(o in report["calibration_ordinals"] for o in g["ordinals"])
@@ -325,6 +374,10 @@ def main():
         "strict_layout_ok": report.get("strict_layout_ok"),
         "calibration_count": len(report.get("calibration_plan", [])),
         "calibration_ordinals": report.get("calibration_ordinals", []),
+        "semantic_rebuild_candidate_count": len(report.get("semantic_rebuild_candidates", [])),
+        "semantic_rebuild_ordinals": report.get("semantic_rebuild_ordinals", []),
+        "roundtrip_semantic_risk_count": len(report.get("roundtrip_semantic_risk_candidates", [])),
+        "roundtrip_semantic_risk_ordinals": report.get("roundtrip_semantic_risk_ordinals", []),
         "unresolved_same_line_breaks": len(report.get("unresolved_same_line_breaks", [])),
         "out": str(Path(args.out).resolve()),
     }, ensure_ascii=True, indent=2))

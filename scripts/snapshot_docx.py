@@ -688,21 +688,24 @@ def _crop_formula_pages(inventory, pages, crop_dir: Path):
             rec["crop_box_px"] = list(box)
 
 
-def snapshot(docx: Path, outdir: Path, label: str | None = None):
+def snapshot(docx: Path, outdir: Path, label: str | None = None, profile: str = "full"):
     docx = docx.resolve()
     outdir = outdir.resolve()
     outdir.mkdir(parents=True, exist_ok=True)
     pdf = outdir / "render.pdf"
+    if profile not in {"full", "geometry"}:
+        raise ValueError(f"unsupported snapshot profile: {profile}")
     source_sha256 = _sha256_file(docx)
     report = {
         "source": str(docx),
         "label": label or docx.stem,
+        "profile": profile,
         "status": "starting",
         "docx_sha256": source_sha256,
     }
 
     session_meta = None
-    with OwnedWord(visible=False, require_clean=True) as (word, meta):
+    with OwnedWord(visible=False, require_clean=False) as (word, meta):
         # Read-only snapshots must not stall on Word's interactive recovery prompt.
         doc = word.Documents.OpenNoRepairDialog(str(docx), False, True, False)
         try:
@@ -711,19 +714,23 @@ def snapshot(docx: Path, outdir: Path, label: str | None = None):
             report["chars"] = int(doc.ComputeStatistics(3))
             report["paragraphs_com"] = int(doc.Paragraphs.Count)
             report["inventory"] = _collect_com_inventory(doc)
-            doc.ExportAsFixedFormat(str(pdf), 17, OpenAfterExport=False)
+            if profile == "full":
+                doc.ExportAsFixedFormat(str(pdf), 17, OpenAfterExport=False)
         finally:
             doc.Close(False)
         session_meta = meta
 
     report["word_session"] = session_meta.to_dict() if session_meta else None
-    report["pages"] = _render_pdf(pdf, outdir / "pages", 2.0)
+    report["pages"] = _render_pdf(pdf, outdir / "pages", 2.0) if profile == "full" else []
     report["cambria_math_runs"] = _cambria_runs(docx)
     report["plain_math_candidates"] = _plain_math_runs(docx)
-    report["preview_inventory"] = _preview_inventory(docx, outdir / "formula_previews")
+    report["preview_inventory"] = (
+        _preview_inventory(docx, outdir / "formula_previews") if profile == "full" else []
+    )
     report["axmath_layout_inventory"] = _axmath_layout_inventory(docx)
     report["inline_baseline_groups"] = _inline_baseline_groups(report["axmath_layout_inventory"])
-    _crop_formula_pages(report["inventory"], report["pages"], outdir / "formula_crops")
+    if profile == "full":
+        _crop_formula_pages(report["inventory"], report["pages"], outdir / "formula_crops")
 
     preview_by_ord = {x["ordinal"]: x for x in report["preview_inventory"]}
     report["relationship_risks"] = {
@@ -785,11 +792,13 @@ def main():
     ap.add_argument("docx")
     ap.add_argument("outdir")
     ap.add_argument("--label")
+    ap.add_argument("--profile", choices=("full", "geometry"), default="full")
     args = ap.parse_args()
-    rep = snapshot(Path(args.docx), Path(args.outdir), args.label)
+    rep = snapshot(Path(args.docx), Path(args.outdir), args.label, args.profile)
     print(json.dumps({
         "status": rep["status"],
         "source": rep["source"],
+        "profile": rep.get("profile"),
         "docx_sha256": rep.get("docx_sha256"),
         "docx_stable": rep.get("docx_stable"),
         "pages": len(rep["pages"]),

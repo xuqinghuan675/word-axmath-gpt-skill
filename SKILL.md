@@ -17,10 +17,32 @@ Goal: keep the original DOCX untouched, create an adjacent work area, convert Of
 2. **Create an adjacent workspace** next to the source.
 3. **Convert once** with `python scripts/one_click_convert.py --input "<file-or-folder>"`.
 4. Wait for `READY_FOR_GPT_REVIEW.json`.
-5. **GPT review/repair** the working DOCX against the frozen source.
-6. Final gate: run `strict_final_compare.py`, fresh-open/export both source and final, generate source-vs-final images for **every page**, verify centered formulas remain centered, then visually inspect every page.
+5. **GPT review/repair** the working DOCX against the frozen source. For intermediate geometry/source evidence, prefer `snapshot_docx.py ... --profile geometry`; this keeps the SHA-bound COM formula inventory but skips full PDF/page rendering, formula crops, and preview extraction that the geometry audit does not consume.
+6. Final gate: run `strict_final_compare.py`, fresh-open/export both source and final, generate source-vs-final images for **every page**, verify centered formulas remain centered, then visually inspect every page. Final strict compare intentionally uses the default **full** snapshot profile; never substitute geometry-only evidence for final visual acceptance.
 
 Never overwrite the source. Never close/kill a Word process that this task did not create.
+
+## GPT execution ownership
+
+Once the user has specified the task goal and authorized the operation, GPT owns the end-to-end working-copy workflow. Do not hand foreground/background Word/AxMath work, Save/Save As handling, task-owned dialogs, retries, detection, repair, page-by-page review, or task-process cleanup back to the user merely because UI interaction is required.
+
+A pre-existing user Word process is not a reason to abort. Record the pre-existing Word PIDs, create and verify a distinct task-owned Word session, and manipulate/close/kill only the task-owned process. If isolated ownership cannot be proven, fail that automation attempt without touching the pre-existing Word session and continue by a safe task-owned route.
+
+GPT may handle task-owned dialogs and temporary foreground interaction when the workflow genuinely requires them. Do not steal focus from or operate an unrelated user Word window. Working copies must be writable; if a frozen source is read-only, clear the read-only attribute only on the copied working file, never on the source.
+
+A Word lock file is advisory, not an automatic reason to hand the task back to the user. If the on-disk source remains readable, freeze the source copy and proceed under the existing source-hash checks; if the source changes during the run, fail acceptance rather than overwriting or closing the user's document.
+
+## Phase A performance invariants
+
+The OfficeMath → AxMath Phase A loop deliberately calls AxMath's official `AMSMML2AM` macro repeatedly. **AxMath owns the per-call batch size.** On AxMath 2.7.0.58, both the historical 768-formula test and the 1335-formula production run observed about **64–66 formulas per completed macro call**; AxMath itself displays the reason: batching is used to avoid Word becoming unresponsive.
+
+`WaitingConvert=1` is a confirmed AxMath batch-completion signal used by the dialog watcher. It is **not a performance knob**. Do not force a larger hidden batch, bypass/reset the completion semantics, close unconfirmed AxMath dialogs, parallelize conversion of the same DOCX, or remove the per-batch `doc.Save()` recovery boundary merely to improve elapsed time.
+
+The measured 1335-formula production run spent about **6718.6 / 6785.0 seconds (99.02%) inside `AMSMML2AM` itself**, about **5.03 macro-seconds per formula**. Python orchestration, watcher polling, persistence, integrity checks, and process cleanup are therefore not the dominant Phase A bottleneck. Conversion reports must retain per-batch macro/save/crash telemetry so future optimization is evidence-based.
+
+Full-document snapshot/render work is expensive too. During repair iterations, prefer geometry audit plus targeted formula/page evidence. Reserve the complete fresh source/final snapshot + every-page strict compare for the final gate, unless a current diagnostic genuinely requires a new full render.
+
+`snapshot_docx.py --profile geometry` is the intermediate fast path: it still opens the real DOCX read-only, computes the Word COM formula inventory/paragraph geometry and verifies the DOCX hash before/after, but it does not export/render every page or create per-formula crop/preview media. The default profile remains `full`; strict final acceptance must keep that default.
 
 ## Repair routing
 
@@ -29,9 +51,14 @@ Classify first; do not try every repair in sequence.
 - **Source is inline, AxMath became giant/display or broke a same-line group**
   → `repair_axmath_inline_roundtrip.ps1`
   → AxMath `AMSAM2TeX` → force single `$...$` → `AMSTeX2AM`.
+  → If `AMSAM2TeX` returns empty/control-character output for an ordinal, do not blindly retry the same roundtrip. Reclassify from fresh evidence and prefer source-semantic Class E when the source formula is available.
+  → A broken same-line group is evidence that the line is wrong, **not** permission to roundtrip every member. GPT must identify the visually/semantically suspicious culprit ordinal(s); one invocation is limited to at most 12 reviewed targets, followed by a fresh audit.
+  → Source formulas containing prime/derivative markers (`′`, `″`, `‴`) are a known semantic-risk class for `AMSAM2TeX`: a syntactically valid result may silently collapse `f′(x)` to `f`. Prefer frozen-source Class E for these ordinals instead of Class A.
 
 - **Remaining non-inline internal metric problem**
-  → `rebuild_axmath_baselines.ps1` / `ConvertAMERebuild`.
+  → `rebuild_axmath_baselines.ps1` / `ConvertAMERebuild` is **probe-only**.
+  → Use at most **3 explicit ordinals** in one probe, then re-audit before doing anything else.
+  → If AxMath count changes, the rebuilt object collapses (for example to a tiny `7.5×16.5` shell/content), the OLE hangs, or semantics/geometry regress, stop this route for the document. Never turn a failed probe into a larger batch.
 
 - **Only the external Word OLE box is wrong**
   → `calibrate_axmath_boxes.py`, moving width/height + `dxaOrig/dyaOrig` + `w:position` coherently.
@@ -41,9 +68,14 @@ Classify first; do not try every repair in sequence.
   → repair/split the preview relationship; do not rewrite the OLE.
 
 - **Semantic formula content is wrong**
-  → rebuild from the source formula; never choose a donor only because its size looks similar.
+  → rebuild from the **frozen source formula at the same ordinal**; never choose a donor only because its size looks similar.
+  → Preferred source-semantic route when direct OMML→AxMath produces damaged content: export the frozen OfficeMath formula through Word's LaTeX representation, normalize Word-specific LaTeX constructs, then create the donor with AxMath `AMSTeX2AM`.
+  → If the rendered source formula is genuinely multi-line, preserve source-derived line breaks with an `aligned`-style TeX donor instead of forcing the formula onto one line or shrinking its OLE box.
+  → `formula_geometry_audit.py` reports `semantic_rebuild_candidates` for non-trivial source expressions trapped in tiny AxMath shells (for example `7.5×16.5`). This is a review queue, never an auto-apply list; legitimate single-glyph narrow formulas must remain untouched.
+  → Production execution is a two-step GPT-owned path: `export_source_word_latex.ps1` exports reviewed source ordinals from the frozen DOCX without modifying it; GPT checks/normalizes the exported LaTeX and writes an approved `{ordinal, tex}` map; `repair_axmath_from_approved_tex.ps1` applies only that approved map to a **new** working copy and verifies AxMath/OfficeMath/paragraph counts.
+  → Do not let either script guess formula semantics. Word LaTeX export is evidence; the GPT-approved map is the semantic contract.
 
-For a source formula proven inline, **inline roundtrip is the first repair**. Do not waste time first on repeated rebuilds, arbitrary width thresholds, shell-only resizing, or preview swapping.
+For a source formula proven inline, **inline roundtrip is the first repair only for a visually confirmed low-semantic-risk culprit**. A broken same-line group alone is not enough; derivative/prime or suspiciously collapsed formulas go directly to frozen-source Class E. Do not waste time on whole-group roundtrips, repeated rebuilds, arbitrary width thresholds, shell-only resizing, or preview swapping.
 
 ## Authority and evidence order
 
@@ -66,8 +98,8 @@ If a prior assistant's narrative conflicts with the current Skill, follow the cu
 The repair routing above is a **hard execution order**, not a menu of experiments.
 
 1. Freeze source evidence and build one repair plan.
-2. Repair confirmed **Class A** source-inline defects with `repair_axmath_inline_roundtrip.ps1`.
-3. Re-audit. Only defects still proven to be **Class B** may use rebuild/baseline repair.
+2. For confirmed **Class A** source-inline defects, inspect the broken same-line group and repair only the culprit ordinal(s), never the entire group by membership alone. Use `repair_axmath_inline_roundtrip.ps1` only for reviewed low-semantic-risk targets (max 12 per invocation); route derivative/prime or suspicious roundtrip cases directly to source-semantic Class E.
+3. Re-audit. Only defects still proven to be **Class B** may use a **local probe of at most 3 ordinals** with rebuild/baseline repair. If that probe changes AxMath count, collapses content/geometry, hangs OLE, or otherwise regresses, abandon Class B for that document and route the affected formula(s) through source-semantic Class E instead.
 4. Re-audit. Only defects proven to be **Class C** external Word OLE-box mismatches may use `calibrate_axmath_boxes.py`.
 5. Class D preview-only and Class E semantic repairs remain isolated to their own evidence.
 6. When no **visually observed** repair defect remains, run the strict final gate and inspect every page. Diagnostic geometry warnings alone do not justify another mutation.
@@ -82,6 +114,7 @@ Unless the current class's prescribed repair has failed with reproducible eviden
 - shrinking OLE shells merely to force the source page count;
 - preview crop/swap experiments used to solve internal AxMath metrics;
 - choosing a repair because it makes the page count look right.
+- forcing/bypassing AxMath's observed 64–66-formula batch behavior, treating `WaitingConvert` as a speed-control flag, or removing the per-batch save/watcher safety boundary without independent reproducible evidence that AxMath no longer needs it.
 
 If the prescribed route fails, stop mutation first. Re-read this Skill and the current evidence, then research the generic mechanism (official Word/OLE documentation and public implementation experience) before adding a new repair. Validate the generic fix on the formal document, then update the Skill; never turn the formal document into a parameter-search sandbox.
 
@@ -97,6 +130,7 @@ A detector failure is not permission to start geometry experiments. Fix the dete
 - Formula crop pixel differences are triage only, not proof.
 - Rendered source + surrounding text beat raw OMML tag names for inline/display intent.
 - `Exactly` line spacing can mimic formula clipping.
+- If page flow drifts while source/final paragraph formatting is otherwise identical, compare rendered ink bounds and source baseline spacing against the AxMath OLE shell height. A transparent/tall OLE shell can inflate Word auto line spacing even when the formula glyphs are already the right size; do not globally scale formula content to solve that mechanism.
 - Shared preview targets are risky; do not overwrite shared WMF media unless all formulas are semantically identical.
 - Full-document rendering is reserved for the final gate.
 

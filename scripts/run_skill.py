@@ -33,6 +33,79 @@ def _word_pids() -> list[int]:
     return sorted(out)
 
 
+def _performance_summary(conversion: dict | None) -> dict | None:
+    if not isinstance(conversion, dict):
+        return None
+
+    batches = conversion.get("batches") or []
+    if not isinstance(batches, list):
+        batches = []
+
+    def _num(value, default=0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float(default)
+
+    macro_seconds = _num(
+        conversion.get("macro_seconds_total"),
+        sum(_num(x.get("seconds")) for x in batches if isinstance(x, dict)),
+    )
+    save_seconds = _num(
+        conversion.get("save_seconds_total"),
+        sum(_num(x.get("save_seconds")) for x in batches if isinstance(x, dict)),
+    )
+    total_seconds = _num(conversion.get("total_seconds"))
+    converted_total = sum(
+        int(_num(x.get("converted"))) for x in batches if isinstance(x, dict)
+    )
+    observed_max_batch = int(
+        _num(
+            conversion.get("observed_max_batch_converted"),
+            max(
+                (int(_num(x.get("converted"))) for x in batches if isinstance(x, dict)),
+                default=0,
+            ),
+        )
+    )
+    macro_share = _num(
+        conversion.get("macro_share_percent"),
+        (100.0 * macro_seconds / total_seconds) if total_seconds > 0 else 0.0,
+    )
+
+    slowest = sorted(
+        (x for x in batches if isinstance(x, dict)),
+        key=lambda x: _num(x.get("seconds")),
+        reverse=True,
+    )[:5]
+    top_slow_batches = [
+        {
+            "batch": x.get("batch"),
+            "converted": x.get("converted"),
+            "macro_seconds": _num(x.get("seconds")),
+            "save_seconds": _num(x.get("save_seconds")),
+            "crash_dump_count": len(x.get("crash_dumps_new") or []),
+        }
+        for x in slowest
+    ]
+
+    return {
+        "batch_count": len(batches),
+        "converted_total": converted_total,
+        "macro_seconds_total": macro_seconds,
+        "save_seconds_total": save_seconds,
+        "total_seconds": total_seconds,
+        "macro_share_percent": macro_share,
+        "macro_seconds_per_formula": (
+            macro_seconds / converted_total if converted_total else None
+        ),
+        "observed_max_batch_converted": observed_max_batch,
+        "new_crash_dump_count": len(conversion.get("new_crash_dumps") or []),
+        "batch_limit_owner": conversion.get("batch_limit_owner") or "AxMath plugin",
+        "top_slow_batches": top_slow_batches,
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", required=True)
@@ -60,18 +133,6 @@ def main():
     t0 = time.perf_counter()
 
     preexisting_word = _word_pids()
-    if preexisting_word:
-        report = {
-            "runner_seconds": time.perf_counter() - t0,
-            "returncode": 2,
-            "conversion": None,
-            "audit": None,
-            "error": "Word is already running; refusing unattended conversion.",
-            "preexisting_word_pids": preexisting_word,
-        }
-        final_report.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(json.dumps(report, ensure_ascii=True, indent=2))
-        return 2
 
     powershell = shutil.which("pwsh") or shutil.which("powershell")
     if not powershell:
@@ -130,19 +191,21 @@ def main():
     # Word can linger briefly while COM/OLE tears down. Give only this
     # automation-created instance a bounded grace period before judging it a leak.
     deadline = time.time() + 6.0
-    lingering_word = _word_pids()
+    lingering_word = [pid for pid in _word_pids() if pid not in preexisting_word]
     while lingering_word and time.time() < deadline:
         time.sleep(0.25)
-        lingering_word = _word_pids()
+        lingering_word = [pid for pid in _word_pids() if pid not in preexisting_word]
 
     report = {
         "runner_seconds": time.perf_counter() - t0,
         "returncode": p.returncode,
         "conversion": conversion,
+        "performance": _performance_summary(conversion),
         "audit": audit,
         "source_sha256_before": source_sha_before,
         "source_sha256_after": source_sha_after,
         "source_unchanged": source_unchanged,
+        "preexisting_word_pids": preexisting_word,
         "lingering_word_pids": lingering_word,
         "stdout_tail": stdout[-8000:],
         "stderr_tail": stderr[-8000:],

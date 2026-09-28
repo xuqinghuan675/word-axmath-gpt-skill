@@ -32,30 +32,45 @@ $ReportFull=[IO.Path]::GetFullPath($ReportPath)
 if([string]::Equals($ReportFull,$InputFull,[StringComparison]::OrdinalIgnoreCase) -or [string]::Equals($ReportFull,$OutputFull,[StringComparison]::OrdinalIgnoreCase)){throw 'ReportPath must not point to the input or output DOCX.'}
 $targets=@($Ordinals -split ',' | ForEach-Object { if($_.Trim()){ [int]$_.Trim() } } | Sort-Object -Unique -Descending)
 if($targets.Count -eq 0){throw 'No ordinals supplied.'}
+if($targets.Count -gt 3){
+  throw "ConvertAMERebuild is probe-only in production. Refusing $($targets.Count) ordinals; use at most 3 explicit formulas and re-audit before any further repair."
+}
 
 $result=[ordered]@{
   input=$InputDocx
   output=$OutputDocx
   targets=$targets
   macro='AxMath_Proj.AMCCAMEqn2TeX.ConvertAMERebuild'
+  probe_only=$true
   repaired=@()
   failed=@()
   success=$false
 }
 $word=$null;$doc=$null;$wordPid=$null;$owned=$false
 $beforeWord=@(Get-Process WINWORD -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
-if($beforeWord.Count -gt 0){throw "Refusing visible AxMath rebuild because Word is already running: $($beforeWord -join ',')"}
+$result.preexisting_word_pids=@($beforeWord)
 
 try{
   if(Test-Path -LiteralPath $OutputDocx){Remove-Item -LiteralPath $OutputDocx -Force}
   Copy-Item -LiteralPath $InputDocx -Destination $OutputDocx -Force
+  $outputItem=Get-Item -LiteralPath $OutputFull
+  $result.output_readonly_cleared=[bool]$outputItem.IsReadOnly
+  if($outputItem.IsReadOnly){$outputItem.IsReadOnly=$false}
 
   $word=New-Object -ComObject Word.Application
-  $word.Visible=$true
-  $word.DisplayAlerts=0
   Start-Sleep -Milliseconds 300
   $afterWord=@(Get-Process WINWORD -ErrorAction SilentlyContinue | Where-Object{$beforeWord -notcontains $_.Id} | Select-Object -ExpandProperty Id)
-  if($afterWord.Count -eq 1){$wordPid=[int]$afterWord[0];$owned=$true;$result.word_pid=$wordPid}
+  if($afterWord.Count -eq 1){
+    $wordPid=[int]$afterWord[0]
+    $owned=$true
+    $result.word_pid=$wordPid
+    $result.word_pid_owned=$true
+  }
+  if(-not $owned){
+    throw 'Could not establish a distinct task-owned Word process; pre-existing user Word processes were left untouched.'
+  }
+  $word.Visible=$true
+  $word.DisplayAlerts=0
 
   $found=$false
   foreach($a in $word.AddIns){
@@ -131,7 +146,11 @@ try{
   $result.fatal_error=$_.Exception.Message
 }finally{
   if($doc -ne $null){try{$doc.Close($false)}catch{}}
-  if($word -ne $null){try{$word.Quit()}catch{$result.word_quit_error=$_.Exception.Message}}
+  if($word -ne $null -and $owned){
+    try{$word.Quit()}catch{$result.word_quit_error=$_.Exception.Message}
+  } elseif($word -ne $null) {
+    $result.word_quit_skipped_unowned=$true
+  }
   $doc=$null;$word=$null
   [GC]::Collect();[GC]::WaitForPendingFinalizers();[GC]::Collect()
   if($wordPid -and $owned){

@@ -32,12 +32,19 @@ $ReportFull=[IO.Path]::GetFullPath($ReportPath)
 if([string]::Equals($ReportFull,$InputFull,[StringComparison]::OrdinalIgnoreCase) -or [string]::Equals($ReportFull,$OutputFull,[StringComparison]::OrdinalIgnoreCase)){throw 'ReportPath must not point to the input or output DOCX.'}
 $targets=@($Ordinals -split ',' | ForEach-Object { if($_.Trim()){ [int]$_.Trim() } } | Sort-Object -Descending -Unique)
 if($targets.Count -eq 0){throw 'No ordinals supplied.'}
+if($targets.Count -gt 12){
+  throw "Inline roundtrip is a reviewed local repair, not a whole-group batch. Refusing $($targets.Count) ordinals; use at most 12 visually/semantically confirmed targets, then re-audit."
+}
 $res=[ordered]@{input=$InputDocx;output=$OutputDocx;targets=$targets;macro_out='AMSAM2TeX';macro_in='AMSTeX2AM';repairs=@();failed=@();success=$false}
-$word=$null;$doc=$null;$wordPid=$null
+$res.reviewed_target_limit=12
+$word=$null;$doc=$null;$wordPid=$null;$wordPidOwned=$false
 $before=@(Get-Process WINWORD -ErrorAction SilentlyContinue|Select-Object -ExpandProperty Id)
-if($before.Count -gt 0){throw "Refusing inline roundtrip because Word is already running: $($before -join ',')"}
+$res.preexisting_word_pids=@($before)
 if(Test-Path -LiteralPath $OutputDocx){Remove-Item -LiteralPath $OutputDocx -Force}
 Copy-Item -LiteralPath $InputDocx -Destination $OutputDocx -Force
+$outputItem=Get-Item -LiteralPath $OutputFull
+$res.output_readonly_cleared=[bool]$outputItem.IsReadOnly
+if($outputItem.IsReadOnly){$outputItem.IsReadOnly=$false}
 
 function Get-AxMathShapes($d){
   $arr=@()
@@ -49,12 +56,20 @@ function Get-AxMathShapes($d){
 
 try{
   $word=New-Object -ComObject Word.Application
+  Start-Sleep -Milliseconds 300
+  $new=@(Get-Process WINWORD -ErrorAction SilentlyContinue|Where-Object{$before -notcontains $_.Id}|Select-Object -ExpandProperty Id)
+  if($new.Count -eq 1){
+    $wordPid=[int]$new[0]
+    $wordPidOwned=$true
+    $res.word_pid=$wordPid
+    $res.word_pid_owned=$true
+  }
+  if(-not $wordPidOwned){
+    throw 'Could not establish a distinct task-owned Word process; pre-existing user Word processes were left untouched.'
+  }
   $word.Visible=$false;$word.DisplayAlerts=0
   try{$word.ScreenUpdating=$false}catch{}
   try{$word.Options.SaveNormalPrompt=$false}catch{}
-  Start-Sleep -Milliseconds 300
-  $new=@(Get-Process WINWORD -ErrorAction SilentlyContinue|Where-Object{$before -notcontains $_.Id}|Select-Object -ExpandProperty Id)
-  if($new.Count -eq 1){$wordPid=[int]$new[0]}
   $found=$false
   foreach($a in $word.AddIns){if($a.Name -eq 'AxMath.dotm'){$found=$true;if(-not $a.Installed){$a.Installed=$true}}}
   if(-not $found){$word.AddIns.Add($TemplatePath,$true)|Out-Null}
@@ -139,10 +154,14 @@ try{
   $res.error=$_.Exception.Message;$res.hresult=$_.Exception.HResult
 }finally{
   if($doc -ne $null){try{$doc.Close($false)}catch{}}
-  if($word -ne $null){try{$word.Quit()}catch{}}
+  if($word -ne $null -and $wordPidOwned){
+    try{$word.Quit()}catch{}
+  } elseif($word -ne $null) {
+    $res.word_quit_skipped_unowned=$true
+  }
   $doc=$null;$word=$null
   [GC]::Collect();[GC]::WaitForPendingFinalizers()
-  if($wordPid){Start-Sleep -Milliseconds 500;if(Get-Process -Id $wordPid -ErrorAction SilentlyContinue){Stop-Process -Id $wordPid -Force -ErrorAction SilentlyContinue}}
+  if($wordPid -and $wordPidOwned){Start-Sleep -Milliseconds 500;if(Get-Process -Id $wordPid -ErrorAction SilentlyContinue){Stop-Process -Id $wordPid -Force -ErrorAction SilentlyContinue}}
   $res|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $ReportPath -Encoding UTF8
   $res|ConvertTo-Json -Depth 8
 }

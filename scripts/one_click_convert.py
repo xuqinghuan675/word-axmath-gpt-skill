@@ -69,9 +69,11 @@ def inspect_source(path: Path) -> dict:
         row["error"] = str(exc)
         return row
 
-    if row["lock_present"]:
-        row["state"] = "blocked_locked"
-    elif row["omath"] > 0 and row["axmath"] == 0:
+    # A Word lock file is evidence that the source may be open, not an
+    # automatic blocker. The workflow freezes a read-only copy and verifies
+    # source SHA before/after conversion, so proceed when the on-disk DOCX is
+    # readable and let those integrity checks decide acceptance.
+    if row["omath"] > 0 and row["axmath"] == 0:
         row["state"] = "ready_officemath"
     elif row["omath"] > 0 and row["axmath"] > 0:
         row["state"] = "mixed_math_needs_review"
@@ -147,6 +149,7 @@ def run_conversion(source: Path, doc_dir: Path) -> dict:
         except Exception:
             skill_report = None
     audit = (skill_report or {}).get("audit") if isinstance(skill_report, dict) else None
+    performance = (skill_report or {}).get("performance") if isinstance(skill_report, dict) else None
 
     success = bool(
         proc.returncode == 0
@@ -172,6 +175,7 @@ def run_conversion(source: Path, doc_dir: Path) -> dict:
         "working_axmath": candidate_stats["axmath_ole"] if candidate_stats else None,
         "paragraph_count_equal": bool(audit and audit.get("paragraph_count_equal")),
         "nonmath_text_exact": bool(audit and audit.get("nonmath_text_exact")),
+        "performance": performance,
         "conversion_log": str(log_path),
     }
 
@@ -198,11 +202,6 @@ def main() -> int:
     if args.inspect_only:
         print(json.dumps(preflight, ensure_ascii=False, indent=2))
         return 0
-
-    if preflight["word_pids"]:
-        preflight["status"] = "blocked_word_running"
-        print(json.dumps(preflight, ensure_ascii=False, indent=2))
-        return 2
 
     ready = [Path(x["source"]) for x in states if x.get("state") == "ready_officemath"]
     if not ready:

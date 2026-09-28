@@ -55,6 +55,7 @@ $doc=$null
 $oldNo=$null
 $oldWait=$null
 $beforeDumps=@()
+$knownDumps=@()
 $wordPid=$null
 $wordPidOwned=$false
 $normalWasSaved=$null
@@ -84,12 +85,15 @@ function Write-ControlState {
 try {
   $existingWord=@(Get-Process WINWORD -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
   $result.preexisting_word_pids=@($existingWord)
-  if($existingWord.Count -gt 0){
-    throw "Refusing background AxMath conversion because Word is already running: $($existingWord -join ',')"
-  }
 
   if(Test-Path -LiteralPath $OutputDocx){Remove-Item -LiteralPath $OutputDocx -Force}
   Copy-Item -LiteralPath $InputDocx -Destination $OutputDocx
+  # A frozen source may intentionally carry the Windows read-only attribute.
+  # The working copy must be writable or Word will divert Save() into an
+  # interactive Save As dialog after the first AxMath batch.
+  $outputItem=Get-Item -LiteralPath $OutputFull
+  $result.output_readonly_cleared=[bool]$outputItem.IsReadOnly
+  if($outputItem.IsReadOnly){$outputItem.IsReadOnly=$false}
 
   if(-not(Test-Path $key)){New-Item -Path $key -Force|Out-Null}
   $props=Get-ItemProperty $key
@@ -102,6 +106,7 @@ try {
     Get-ChildItem $crashDir -Filter 'AxMath*.dmp' -ErrorAction SilentlyContinue |
     Select-Object -ExpandProperty Name
   )
+  $knownDumps=@($beforeDumps)
 
   Set-ItemProperty $key -Name DoNoWinVerb -Value 0
   Set-ItemProperty $key -Name WaitingConvert -Value 0
@@ -116,16 +121,10 @@ public static class WordPidNative {
 '@ -ErrorAction SilentlyContinue
 
   $word=New-Object -ComObject Word.Application
-  $word.Visible=$false
-  $word.DisplayAlerts=0
-  try{$word.ScreenUpdating=$false}catch{}
-  try{$word.Options.CheckSpellingAsYouType=$false}catch{}
-  try{$word.Options.CheckGrammarAsYouType=$false}catch{}
-  try{$word.Options.SaveNormalPrompt=$false}catch{}
-  try{$normalWasSaved=[bool]$word.NormalTemplate.Saved}catch{}
 
-  # Resolve the isolated WINWORD PID by process-diff first. Hwnd is a fallback
-  # because some Word COM builds expose it inconsistently during startup.
+  # Establish ownership before changing application options or opening a
+  # document. Pre-existing user Word processes are allowed, but this task must
+  # prove that its COM object belongs to a distinct WINWORD process.
   Start-Sleep -Milliseconds 250
   $newWord=@(
     Get-Process WINWORD -ErrorAction SilentlyContinue |
@@ -149,6 +148,17 @@ public static class WordPidNative {
       }
     } catch {}
   }
+  if(-not $wordPidOwned){
+    throw "Could not establish an isolated task-owned Word process; pre-existing Word processes were left untouched."
+  }
+
+  $word.Visible=$false
+  $word.DisplayAlerts=0
+  try{$word.ScreenUpdating=$false}catch{}
+  try{$word.Options.CheckSpellingAsYouType=$false}catch{}
+  try{$word.Options.CheckGrammarAsYouType=$false}catch{}
+  try{$word.Options.SaveNormalPrompt=$false}catch{}
+  try{$normalWasSaved=[bool]$word.NormalTemplate.Saved}catch{}
 
   $found=$false
   foreach($addin in $word.AddIns){
@@ -187,6 +197,12 @@ public static class WordPidNative {
 
     $converted=$before-$after
     $waitState=(Get-ItemProperty $key).WaitingConvert
+    $currentDumps=@(
+      Get-ChildItem $crashDir -Filter 'AxMath*.dmp' -ErrorAction SilentlyContinue |
+      Select-Object -ExpandProperty Name
+    )
+    $batchDumps=@($currentDumps | Where-Object {$_ -notin $knownDumps})
+    $knownDumps=@($currentDumps)
     $batchRec=[ordered]@{
       batch=$batch
       before_omath=$before
@@ -194,15 +210,24 @@ public static class WordPidNative {
       converted=$converted
       seconds=$sw.Elapsed.TotalSeconds
       waiting_convert=$waitState
+      save_seconds=0.0
+      crash_dumps_new=@($batchDumps)
     }
-    $result.batches += [pscustomobject]$batchRec
 
     if($converted -le 0){
+      $result.batches += [pscustomobject]$batchRec
       throw "AxMath batch $batch made no progress ($before -> $after)."
     }
 
+    # Keep the per-batch save. AxMath 2.7.x has produced crash dumps during
+    # successful large-document conversions; persisting each completed batch
+    # is a recovery boundary, not disposable overhead.
+    $saveSw=[Diagnostics.Stopwatch]::StartNew()
     $doc.Save()
-    Write-Output ('BATCH {0}: {1}->{2}, converted={3}, seconds={4:N2}' -f $batch,$before,$after,$converted,$sw.Elapsed.TotalSeconds)
+    $saveSw.Stop()
+    $batchRec.save_seconds=$saveSw.Elapsed.TotalSeconds
+    $result.batches += [pscustomobject]$batchRec
+    Write-Output ('BATCH {0}: {1}->{2}, converted={3}, macro={4:N2}s, save={5:N2}s, crashes={6}' -f $batch,$before,$after,$converted,$sw.Elapsed.TotalSeconds,$saveSw.Elapsed.TotalSeconds,$batchDumps.Count)
   }
 
   $result.after_omath_com=$doc.OMaths.Count
@@ -229,7 +254,7 @@ finally {
     try{$doc.Close($false)}catch{$result.doc_close_error=$_.Exception.Message}
   }
 
-  if($word -ne $null){
+  if($word -ne $null -and $wordPidOwned){
     try{
       if($normalWasSaved -eq $true -and -not [bool]$word.NormalTemplate.Saved){
         $word.NormalTemplate.Saved=$true
@@ -237,6 +262,10 @@ finally {
     }catch{}
     try{$word.DisplayAlerts=0}catch{}
     try{$word.Quit()}catch{$result.word_quit_error=$_.Exception.Message}
+  } elseif($word -ne $null) {
+    # Never call Quit() on a COM object whose process ownership could not be
+    # proven; it may belong to a user's pre-existing Word session.
+    $result.word_quit_skipped_unowned=$true
   }
 
   $doc=$null
@@ -273,6 +302,15 @@ finally {
   $result.new_crash_dumps=@($afterDumps|Where-Object{$_ -notin $beforeDumps})
   $total.Stop()
   $result.total_seconds=$total.Elapsed.TotalSeconds
+  $macroMeasure=$result.batches | Measure-Object -Property seconds -Sum
+  $saveMeasure=$result.batches | Measure-Object -Property save_seconds -Sum
+  $convertedMeasure=$result.batches | Measure-Object -Property converted -Maximum
+  $result.macro_seconds_total=[double]$macroMeasure.Sum
+  $result.save_seconds_total=[double]$saveMeasure.Sum
+  $result.non_macro_seconds=[math]::Max(0.0,$result.total_seconds-$result.macro_seconds_total)
+  $result.macro_share_percent=if($result.total_seconds -gt 0){100.0*$result.macro_seconds_total/$result.total_seconds}else{0.0}
+  $result.observed_max_batch_converted=[int]$convertedMeasure.Maximum
+  $result.batch_limit_owner='AxMath plugin; do not force/bypass WaitingConvert batch semantics'
 
   $json=$result|ConvertTo-Json -Depth 8
   Set-Content -LiteralPath $ReportPath -Value $json -Encoding UTF8
