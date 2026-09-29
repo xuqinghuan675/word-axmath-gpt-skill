@@ -31,6 +31,64 @@ function Get-AxMathShapes($d){
   return ,@($arr)
 }
 
+function Assert-CanonicalPrimeTeX {
+  param([string]$Tex,[int]$Ordinal)
+  $noncanonicalPrimeChars=@(
+    [char]0x2032, # PRIME
+    [char]0x2033, # DOUBLE PRIME
+    [char]0x2034, # TRIPLE PRIME
+    [char]0x2057, # QUADRUPLE PRIME
+    [char]0x02B9, # MODIFIER LETTER PRIME
+    [char]0x02BA, # MODIFIER LETTER DOUBLE PRIME
+    [char]0x2019, # RIGHT SINGLE QUOTATION MARK
+    [char]0x2018  # LEFT SINGLE QUOTATION MARK
+  )
+  foreach($ch in $noncanonicalPrimeChars){
+    if($Tex.Contains([string]$ch)){
+      throw "noncanonical_prime_literal for ordinal $Ordinal. Normalize the approved TeX with scripts\normalize_axmath_tex.py before AMSTeX2AM."
+    }
+  }
+  if($Tex -match "(?<!')'(?!')"){
+    throw "noncanonical_single_prime_apostrophe for ordinal $Ordinal. AxMath 2.7.0.58 canonical first-prime syntax is \prime; normalize first."
+  }
+  if($Tex -match "'{4,}"){
+    throw "unverified_prime_order for ordinal $Ordinal. Only AxMath-verified prime orders 1..3 may be auto-rebuilt."
+  }
+  if($Tex -match '[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]'){
+    throw "unicode_superscript_literal for ordinal $Ordinal. Normalize Unicode superscripts before AMSTeX2AM."
+  }
+  # Prime itself is superscript syntax. A second exponent must apply to the
+  # already-primed atom: {y\prime}^{2}, {y''}^{2}, {y'''}^{2}.
+  if($Tex -match "(?:\\prime\b|'{2,3})\s*\^(?:\{|[A-Za-z0-9])"){
+    throw "ungrouped_primed_atom_exponent for ordinal $Ordinal. Group the primed atom before applying another exponent."
+  }
+}
+
+function Get-CanonicalPrimeOrders {
+  param([string]$Tex)
+  $orders=@()
+  foreach($m in [regex]::Matches($Tex,"'''|''|\\prime\b")){
+    $token=[string]$m.Value
+    if($token.StartsWith('\prime')){$orders += 1}
+    elseif($token.Length -eq 2){$orders += 2}
+    elseif($token.Length -eq 3){$orders += 3}
+  }
+  return @($orders)
+}
+
+function Assert-AxMathPrimeRoundTrip {
+  param([string]$ApprovedTex,[string]$RoundTripTex,[int]$Ordinal)
+  $expected=@(Get-CanonicalPrimeOrders $ApprovedTex)
+  if($expected.Count -eq 0){return}
+  if($RoundTripTex.Contains('?')){
+    throw "axmath_prime_roundtrip_corrupt for ordinal ${Ordinal}: AxMath serialized a '?' instead of the approved prime semantics."
+  }
+  $actual=@(Get-CanonicalPrimeOrders $RoundTripTex)
+  if(($expected -join ',') -ne ($actual -join ',')){
+    throw "axmath_prime_roundtrip_mismatch for ordinal ${Ordinal}: expected prime orders [$($expected -join ',')], got [$($actual -join ',')]."
+  }
+}
+
 $InputFull=[IO.Path]::GetFullPath($InputDocx)
 $OutputFull=[IO.Path]::GetFullPath($OutputDocx)
 $MapFull=[IO.Path]::GetFullPath($MapPath)
@@ -51,6 +109,7 @@ foreach($row in $rows){
   $tex=[string]$row.tex
   if([string]::IsNullOrWhiteSpace($tex)){throw "Approved TeX is empty for ordinal $($row.ordinal)."}
   if(-not ($tex.StartsWith('$') -and $tex.EndsWith('$')) -or $tex.StartsWith('$$') -or $tex.EndsWith('$$')){throw "Approved TeX must be wrapped in exactly one leading and trailing dollar delimiter for ordinal $($row.ordinal)."}
+  Assert-CanonicalPrimeTeX -Tex $tex -Ordinal ([int]$row.ordinal)
 }
 
 $TemplatePath=Resolve-AxMathTemplate $TemplatePath
@@ -59,6 +118,7 @@ $result=[ordered]@{
   input=$InputFull
   output=$OutputFull
   approved_tex_map=$MapFull
+  prime_contract='axmath_builtin_prime_v2'
   target_count=$rows.Count
   preexisting_word_pids=@($beforeWord)
   repairs=@()
@@ -108,7 +168,7 @@ try{
   foreach($row in @($rows | Sort-Object {[int]$_.ordinal} -Descending)){
     $ord=[int]$row.ordinal
     $rec=[ordered]@{ordinal=$ord;success=$false;tex=[string]$row.tex}
-    $tmp=$null
+    $tmp=$null;$verifyTmp=$null
     try{
       $ax=Get-AxMathShapes $doc
       if($ax.Count -ne $result.axmath_before){throw "AxMath count drifted before ordinal ${ord}: $($ax.Count) != $($result.axmath_before)"}
@@ -132,6 +192,28 @@ try{
       }
       $rec.donor=[ordered]@{width=$dw;height=$dh}
 
+      $expectedPrimeOrders=@(Get-CanonicalPrimeOrders ([string]$row.tex))
+      $rec.prime_orders=@($expectedPrimeOrders)
+      if($expectedPrimeOrders.Count -gt 0){
+        # A successful AMSTeX2AM call is not enough. Re-export a copy of the
+        # exact donor through AxMath and require the same prime-order sequence.
+        # This detects raw U+2034-style corruption that otherwise yields one
+        # Equation.AxMath OLE but serializes as '?'.
+        $verifyTmp=$word.Documents.Add()
+        $donor.Range.Copy()
+        $verifyTmp.Range(0,0).Paste()
+        $verifyAx=Get-AxMathShapes $verifyTmp
+        if($verifyAx.Count -ne 1){throw "prime verification copy count=$($verifyAx.Count)"}
+        $verifyTmp.Content.Select()
+        $cbVerify=$null
+        $word.Run('AMSAM2TeX',([ref]$cbVerify))
+        $roundTripTex=[string]$verifyTmp.Content.Text.Trim([char]13,[char]10,[char]32,[char]9)
+        Assert-AxMathPrimeRoundTrip -ApprovedTex ([string]$row.tex) -RoundTripTex $roundTripTex -Ordinal $ord
+        $rec.prime_roundtrip_tex=$roundTripTex
+        $rec.prime_roundtrip_verified=$true
+        $verifyTmp.Close($false);$verifyTmp=$null
+      }
+
       $donor.Range.Copy()
       $doc.Range($oldStart,$oldEnd).Delete()
       $doc.Range($oldStart,$oldStart).Paste()
@@ -149,6 +231,7 @@ try{
       # Persist every reviewed semantic replacement as its own recovery boundary.
       $doc.Save()
     }catch{
+      if($verifyTmp -ne $null){try{$verifyTmp.Close($false)}catch{};$verifyTmp=$null}
       if($tmp -ne $null){try{$tmp.Close($false)}catch{};$tmp=$null}
       $rec.error=$_.Exception.Message
       $result.failed += [pscustomobject]$rec

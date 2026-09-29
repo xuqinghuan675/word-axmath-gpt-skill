@@ -7,6 +7,7 @@ import math
 import statistics
 from pathlib import Path
 
+from normalize_axmath_tex import contains_prime_or_derivative_marker
 from snapshot_docx import _axmath_layout_inventory, _collect_com_inventory
 from word_runtime import OwnedWord
 
@@ -112,6 +113,8 @@ def audit(source_snapshot: dict, working_docx: Path):
         "same_line_breaks": [],
         "semantic_rebuild_candidates": [],
         "semantic_rebuild_ordinals": [],
+        "prime_semantic_candidates": [],
+        "prime_semantic_ordinals": [],
         "roundtrip_semantic_risk_candidates": [],
         "roundtrip_semantic_risk_ordinals": [],
         "calibration_plan": [],
@@ -188,6 +191,22 @@ def audit(source_snapshot: dict, working_docx: Path):
         report["pairs"].append(row)
         by_ord[ordinal] = row
 
+        # Prime/derivative semantics are independent of geometry.  A formula
+        # may look perfectly aligned while the converted AxMath object uses the
+        # wrong prime representation.  Route every source formula carrying a
+        # prime marker through the frozen-source semantic path so AMSTeX2AM can
+        # rebuild AxMath's native prime semantics deterministically.
+        source_text = str(a.get("text") or "")
+        if contains_prime_or_derivative_marker(source_text):
+            report["prime_semantic_candidates"].append({
+                "ordinal": ordinal,
+                "reason": "source_contains_prime_or_derivative_marker",
+                "source_text": source_text,
+                "preferred_route": "source_semantic_rebuild_native_prime",
+                "requires_source_semantic_rebuild": True,
+                "auto_apply": False,
+            })
+
         # A tiny shell is legitimate for a single glyph such as x, 0 or alpha.
         # It is suspicious when the frozen source at the same ordinal contains
         # a non-trivial expression. This is triage only; GPT must visually or
@@ -260,16 +279,16 @@ def audit(source_snapshot: dict, working_docx: Path):
             broken_members.update(ordinals)
 
     # AxMath -> TeX roundtrip has been observed to drop prime/derivative
-    # semantics while still yielding a syntactically valid donor. Flag those
-    # members of broken same-line groups so GPT prefers frozen-source semantic
-    # rebuild instead of blindly roundtripping the working AxMath object.
-    prime_chars = {"′", "″", "‴", "⁗"}
+    # semantics while still yielding a syntactically valid donor.  Keep the
+    # existing broken-same-line risk queue for Class A routing, while the
+    # independent prime_semantic_candidates queue above covers all prime
+    # formulas even when their geometry looks normal.
     for ordinal in sorted(broken_members):
         row = by_ord.get(ordinal)
         if not row:
             continue
         source_text = str(row["source"].get("text") or "")
-        if any(ch in source_text for ch in prime_chars):
+        if contains_prime_or_derivative_marker(source_text):
             report["roundtrip_semantic_risk_candidates"].append({
                 "ordinal": ordinal,
                 "reason": "source_contains_prime_or_derivative_marker",
@@ -336,6 +355,9 @@ def audit(source_snapshot: dict, working_docx: Path):
     report["semantic_rebuild_ordinals"] = [
         x["ordinal"] for x in report["semantic_rebuild_candidates"]
     ]
+    report["prime_semantic_ordinals"] = [
+        x["ordinal"] for x in report["prime_semantic_candidates"]
+    ]
     report["roundtrip_semantic_risk_ordinals"] = [
         x["ordinal"] for x in report["roundtrip_semantic_risk_candidates"]
     ]
@@ -376,6 +398,8 @@ def main():
         "calibration_ordinals": report.get("calibration_ordinals", []),
         "semantic_rebuild_candidate_count": len(report.get("semantic_rebuild_candidates", [])),
         "semantic_rebuild_ordinals": report.get("semantic_rebuild_ordinals", []),
+        "prime_semantic_candidate_count": len(report.get("prime_semantic_candidates", [])),
+        "prime_semantic_ordinals": report.get("prime_semantic_ordinals", []),
         "roundtrip_semantic_risk_count": len(report.get("roundtrip_semantic_risk_candidates", [])),
         "roundtrip_semantic_risk_ordinals": report.get("roundtrip_semantic_risk_ordinals", []),
         "unresolved_same_line_breaks": len(report.get("unresolved_same_line_breaks", [])),

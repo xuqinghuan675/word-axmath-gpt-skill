@@ -28,6 +28,8 @@ def main() -> int:
     inline_roundtrip = (SCRIPTS / "repair_axmath_inline_roundtrip.ps1").read_text(encoding="utf-8")
     source_latex_export = (SCRIPTS / "export_source_word_latex.ps1").read_text(encoding="utf-8")
     approved_tex_repair = (SCRIPTS / "repair_axmath_from_approved_tex.ps1").read_text(encoding="utf-8")
+    prime_normalizer = (SCRIPTS / "normalize_axmath_tex.py").read_text(encoding="utf-8")
+    prime_test = SCRIPTS / "test_prime_normalization.py"
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     snapshot = (SCRIPTS / "snapshot_docx.py").read_text(encoding="utf-8")
 
@@ -61,9 +63,12 @@ def main() -> int:
         errors.append("geometry audit still risks treating a planned repair as already resolved")
     for needle in [
         "semantic_rebuild_candidates",
+        "prime_semantic_candidates",
+        "prime_semantic_ordinals",
         "roundtrip_semantic_risk_candidates",
         "nontrivial_source_in_tiny_axmath_shell",
         "source_contains_prime_or_derivative_marker",
+        "contains_prime_or_derivative_marker",
     ]:
         if needle not in geo:
             errors.append(f"formula_geometry_audit.py missing repair triage contract: {needle}")
@@ -160,12 +165,37 @@ def main() -> int:
         "$doc.Save()",
         "StartsWith('$$')",
         "approved TeX map",
+        "Assert-CanonicalPrimeTeX",
+        "noncanonical_prime_literal",
+        "ungrouped_primed_atom_exponent",
+        "Assert-AxMathPrimeRoundTrip",
+        "axmath_builtin_prime_v2",
     ]:
         if needle not in approved_tex_repair:
             errors.append(f"repair_axmath_from_approved_tex.ps1 missing approved-map safety contract: {needle}")
-    for needle in ["export_source_word_latex.ps1", "repair_axmath_from_approved_tex.ps1", "GPT-approved map"]:
+    for needle in [
+        "export_source_word_latex.ps1",
+        "normalize_axmath_tex.py",
+        "repair_axmath_from_approved_tex.ps1",
+        "GPT-approved map",
+        "prime_semantic_candidates",
+        "first prime",
+    ]:
         if needle not in skill:
             errors.append(f"SKILL.md missing production Class E contract: {needle}")
+
+    for needle in [
+        "PRIME_SOURCE_MARKERS",
+        "NONCANONICAL_PRIME_LITERALS",
+        "normalize_axmath_tex",
+        "canonical_prime_issues",
+        "ungrouped_primed_atom_exponent",
+        "axmath_builtin_prime_v2",
+    ]:
+        if needle not in prime_normalizer:
+            errors.append(f"normalize_axmath_tex.py missing prime contract: {needle}")
+    if not prime_test.is_file():
+        errors.append("test_prime_normalization.py missing")
 
     for needle in ["_performance_summary", '"performance": _performance_summary(conversion)']:
         if needle not in runner:

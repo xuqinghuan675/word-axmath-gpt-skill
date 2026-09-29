@@ -124,15 +124,17 @@ python scripts\snapshot_docx.py "<frozen-source.docx>" "<review\source_geometry>
 - `scripts/repair_axmath_inline_roundtrip.ps1`：行内/display 局部修复；只处理 GPT 已确认的 culprit，单次最多 12 个，禁止把 broken same-line group 整组无脑 roundtrip
 - `scripts/rebuild_axmath_baselines.ps1`：Class B 内部指标**局部 probe**（每次最多 3 个明确 ordinal；禁止批量重建）
 - `scripts/export_source_word_latex.ps1`：从 frozen source 只读导出指定 ordinal 的 Word LaTeX，带 source SHA 前后校验
+- `scripts/normalize_axmath_tex.py`：把 Word/Unicode 的 prime 形式按 AxMath 2.7.0.58 已实机验证的内置语法规范化：一阶 `\prime`、二阶 `''`、三阶 `'''`；同时处理 `y′² → {y\prime}^{2}` 这类 prime+上标结合
+- `scripts/probe_axmath_prime_contract.ps1`：在真实 Word + AxMath 上复测一/二/三阶 prime 回转，并确认 raw Unicode `‴` 仍是不安全 donor；用于安装版本变化后的再校验
 - `scripts/repair_axmath_from_approved_tex.ps1`：把 GPT 已批准的 `{ordinal, tex}` map 写回新的 working 副本；不猜公式语义，逐个保存并保持 AxMath/OfficeMath/paragraph count
 - `scripts/calibrate_axmath_boxes.py`：Word 外部 OLE 框校准
 - `scripts/strict_final_compare.py`：最终 source-vs-final 每页并排图 + 内容/结构诊断 + 视觉复核模板
 - `scripts/finalize_visual_review.py`：校验逐页视觉复核清单与文件/图片哈希，只有它输出 `acceptance_pass=true` 才算最终通过
 - `scripts/repo_selfcheck.py`：跨平台静态自检，检查 Python 语法和关键安全/验收契约
 
-语义损坏或直接 OMML→AxMath donor 已经塌缩时，优先从 frozen source 的同 ordinal 公式重建：Word 导出 LaTeX → 归一化 Word 特有 LaTeX → AxMath `AMSTeX2AM`。源公式真实跨多行时保留 source-derived line breaks，用 `aligned` 类结构重建，不靠缩小 OLE 外框硬塞回一行。
+语义损坏或直接 OMML→AxMath donor 已经塌缩时，优先从 frozen source 的同 ordinal 公式重建：Word 导出 LaTeX → `normalize_axmath_tex.py` 归一化 → GPT 复核 → AxMath `AMSTeX2AM`。其中 prime/导数符号是独立语义风险：`formula_geometry_audit.py` 会对所有含 prime 的源公式生成 `prime_semantic_candidates`，不再要求先出现 same-line/尺寸异常。徐清欢电脑上的 AxMath 2.7.0.58 已确认：`\prime`、`''`、`'''` 分别作为一/二/三阶 prime 的内置解析语法，并能在 `AMSTeX2AM → AMSAM2TeX` 回转中保留阶数；直接把 Unicode `‴` 喂给 `AMSTeX2AM` 会回转为 `?`，因此 raw Unicode prime 只作源证据，不作 donor TeX。源公式真实跨多行时保留 source-derived line breaks，用 `aligned` 类结构重建，不靠缩小 OLE 外框硬塞回一行。
 
-`formula_geometry_audit.py` 会额外列出两种 GPT review queue：`semantic_rebuild_candidates` 用于“非平凡 source 表达式却落进 tiny AxMath shell”的疑似语义塌缩；`roundtrip_semantic_risk_candidates` 用于 broken same-line group 里含 prime/导数标记的公式。这两类都不自动改文档，前者先视觉确认，后者优先走 frozen-source semantic rebuild。历史正式文档已证明 `AMSAM2TeX` 可能把 `f′(x)` 静默变成 `f`，所以不能再用“宏调用成功”代替语义验收。
+`formula_geometry_audit.py` 会额外列出三种 GPT review/routing queue：`semantic_rebuild_candidates` 用于“非平凡 source 表达式却落进 tiny AxMath shell”的疑似语义塌缩；`prime_semantic_candidates` 对所有 prime/导数源公式独立生效；`roundtrip_semantic_risk_candidates` 则标记 broken same-line group 中不应走 AxMath→TeX roundtrip 的 prime 公式。历史正式文档已证明 `AMSAM2TeX` 可能把 `f′(x)` 静默变成 `f`，所以不能再用“宏调用成功”代替语义验收。
 
 AxMath 的 `AxMath.dotm` 会从常见 Program Files 位置自动寻找；如果安装在其他位置，GPT 可以给 PowerShell 脚本显式传 `-TemplatePath`。
 
