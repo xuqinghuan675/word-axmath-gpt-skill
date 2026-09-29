@@ -48,10 +48,12 @@ if($outputItem.IsReadOnly){$outputItem.IsReadOnly=$false}
 
 function Get-AxMathShapes($d){
   $arr=@()
-  foreach($s in $d.InlineShapes){
-    try{if($s.OLEFormat.ProgID -eq 'Equation.AxMath'){$arr += $s}}catch{}
+  $collection=$d.InlineShapes
+  for($i=1;$i -le [int]$collection.Count;$i++){
+    $s=$collection.Item($i)
+    try{if([string]$s.OLEFormat.ProgID -eq 'Equation.AxMath'){$arr += $s}}catch{}
   }
-  return ,@($arr)
+  return $arr
 }
 
 try{
@@ -74,7 +76,7 @@ try{
   foreach($a in $word.AddIns){if($a.Name -eq 'AxMath.dotm'){$found=$true;if(-not $a.Installed){$a.Installed=$true}}}
   if(-not $found){$word.AddIns.Add($TemplatePath,$true)|Out-Null}
   $doc=$word.Documents.Open($OutputDocx,$false,$false,$false)
-  $initial=Get-AxMathShapes $doc
+  $initial=@(Get-AxMathShapes $doc)
   $res.axmath_before=$initial.Count
   $res.omath_before=[int]$doc.OMaths.Count
   $res.paragraphs_before=[int]$doc.Paragraphs.Count
@@ -83,7 +85,7 @@ try{
     $rec=[ordered]@{ordinal=$ord;success=$false}
     $tmp=$null
     try{
-      $ax=Get-AxMathShapes $doc
+      $ax=@(Get-AxMathShapes $doc)
       if($ord -lt 1 -or $ord -gt $ax.Count){throw "ordinal $ord out of range 1..$($ax.Count)"}
       $target=$ax[$ord-1]
       $oldStart=[int]$target.Range.Start
@@ -117,7 +119,7 @@ try{
       $tmp.Content.Select()
       $cb2=$null
       $word.Run('AMSTeX2AM',([ref]$cb2))
-      $newAx=Get-AxMathShapes $tmp
+      $newAx=@(Get-AxMathShapes $tmp)
       if($newAx.Count -ne 1){throw "TeX->AxMath donor count=$($newAx.Count)"}
       $donor=$newAx[0]
       $rec.donor=[ordered]@{width=[double]$donor.Width;height=[double]$donor.Height}
@@ -129,7 +131,7 @@ try{
       $doc.Range($oldStart,$oldStart).Paste()
       $tmp.Close($false);$tmp=$null
 
-      $ax2=Get-AxMathShapes $doc
+      $ax2=@(Get-AxMathShapes $doc)
       if($ax2.Count -ne $res.axmath_before){throw "AxMath count changed to $($ax2.Count)"}
       $replacement=$null
       foreach($s in $ax2){if([Math]::Abs([int]$s.Range.Start-$oldStart) -le 2){$replacement=$s;break}}
@@ -145,7 +147,7 @@ try{
   }
 
   $doc.Save()
-  $final=Get-AxMathShapes $doc
+  $final=@(Get-AxMathShapes $doc)
   $res.axmath_after=$final.Count
   $res.omath_after=[int]$doc.OMaths.Count
   $res.paragraphs_after=[int]$doc.Paragraphs.Count

@@ -5,6 +5,25 @@ param(
 )
 $ErrorActionPreference='Stop'
 
+function Get-SharedSha256 {
+  param([Parameter(Mandatory=$true)][string]$Path)
+  $stream=$null;$sha=$null
+  try{
+    $stream=[IO.File]::Open(
+      $Path,
+      [IO.FileMode]::Open,
+      [IO.FileAccess]::Read,
+      ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
+    )
+    $sha=[Security.Cryptography.SHA256]::Create()
+    return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-','').ToLowerInvariant()
+  }finally{
+    if($sha){$sha.Dispose()}
+    if($stream){$stream.Dispose()}
+  }
+}
+
+
 $SourceFull=[IO.Path]::GetFullPath($SourceDocx)
 $OutputFull=[IO.Path]::GetFullPath($OutputJson)
 if(-not (Test-Path -LiteralPath $SourceFull)){throw "Source DOCX not found: $SourceFull"}
@@ -13,7 +32,7 @@ $targets=@($Ordinals -split ',' | ForEach-Object { if($_.Trim()){ [int]$_.Trim()
 if($targets.Count -eq 0){throw 'No ordinals supplied.'}
 if($targets.Count -gt 48){throw "Source LaTeX export is intentionally bounded. Refusing $($targets.Count) ordinals; inspect/export at most 48 reviewed formulas per batch."}
 
-$sourceShaBefore=(Get-FileHash -Algorithm SHA256 -LiteralPath $SourceFull).Hash.ToLowerInvariant()
+$sourceShaBefore=(Get-SharedSha256 $SourceFull)
 $beforeWord=@(Get-Process WINWORD -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
 $result=[ordered]@{
   source=$SourceFull
@@ -95,7 +114,7 @@ try{
     }
   }
 
-  $sourceShaAfter=(Get-FileHash -Algorithm SHA256 -LiteralPath $SourceFull).Hash.ToLowerInvariant()
+  $sourceShaAfter=(Get-SharedSha256 $SourceFull)
   $result.source_sha256_after=$sourceShaAfter
   $result.source_unchanged=($sourceShaAfter -eq $sourceShaBefore)
   if(-not $result.source_unchanged){$result.success=$false;$result.source_changed_error='Frozen source SHA changed during LaTeX export.'}

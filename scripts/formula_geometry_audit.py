@@ -7,6 +7,7 @@ import math
 import statistics
 from pathlib import Path
 
+from normalize_axmath_tex import contains_prime_or_derivative_marker
 from snapshot_docx import _axmath_layout_inventory, _collect_com_inventory
 from word_runtime import OwnedWord
 
@@ -112,8 +113,12 @@ def audit(source_snapshot: dict, working_docx: Path):
         "same_line_breaks": [],
         "semantic_rebuild_candidates": [],
         "semantic_rebuild_ordinals": [],
+        "prime_semantic_candidates": [],
+        "prime_semantic_ordinals": [],
         "roundtrip_semantic_risk_candidates": [],
         "roundtrip_semantic_risk_ordinals": [],
+        "visual_wrap_loss_candidates": [],
+        "visual_wrap_loss_ordinals": [],
         "calibration_plan": [],
         "calibration_ordinals": [],
     }
@@ -161,9 +166,13 @@ def audit(source_snapshot: dict, working_docx: Path):
                 "page": a.get("page"),
                 "x_pt": a.get("x_pt"),
                 "y_pt": a.get("y_pt"),
+                "end_page": a.get("end_page"),
                 "end_x_pt": a.get("end_x_pt"),
                 "end_y_pt": a.get("end_y_pt"),
+                "same_visual_line": a.get("same_visual_line"),
                 "visual_width_pt": a.get("visual_width_pt"),
+                "text_right_pt": a.get("text_right_pt"),
+                "text_bounds_reliable": a.get("text_bounds_reliable"),
                 "visual_width_reliable": a.get("visual_width_reliable"),
                 "paragraph_start": a.get("paragraph_start"),
                 "source_inline_context": a.get("source_inline_context"),
@@ -180,6 +189,11 @@ def audit(source_snapshot: dict, working_docx: Path):
                 "height_pt": b.get("height_pt"),
                 "paragraph_start": b.get("paragraph_start"),
                 "paragraph_format": b.get("paragraph_format"),
+                "text_right_pt": b.get("text_right_pt"),
+                "text_bounds_reliable": b.get("text_bounds_reliable"),
+                "right_edge_pt": b.get("right_edge_pt"),
+                "right_overflow_pt": b.get("right_overflow_pt"),
+                "overflows_text_right": b.get("overflows_text_right"),
             },
             "width_ratio": ratio,
             "width_ratio_residual": residual,
@@ -187,6 +201,21 @@ def audit(source_snapshot: dict, working_docx: Path):
         }
         report["pairs"].append(row)
         by_ord[ordinal] = row
+
+        # Prime/derivative semantics are independent of geometry.  A formula
+        # may look perfectly aligned while the AxMath parser received the wrong
+        # prime syntax.  Route every frozen-source prime formula through the
+        # source-semantic prime contract.
+        source_text = str(a.get("text") or "")
+        if contains_prime_or_derivative_marker(source_text):
+            report["prime_semantic_candidates"].append({
+                "ordinal": ordinal,
+                "reason": "source_contains_prime_or_derivative_marker",
+                "source_text": source_text,
+                "preferred_route": "source_semantic_rebuild_native_prime",
+                "requires_source_semantic_rebuild": True,
+                "auto_apply": False,
+            })
 
         # A tiny shell is legitimate for a single glyph such as x, 0 or alpha.
         # It is suspicious when the frozen source at the same ordinal contains
@@ -207,6 +236,42 @@ def audit(source_snapshot: dict, working_docx: Path):
                 "working_height_pt": b.get("height_pt"),
                 "requires_visual_confirmation": True,
                 "auto_apply": False,
+            })
+
+        source_page = a.get("page")
+        source_end_page = a.get("end_page")
+        source_y = a.get("y_pt")
+        source_end_y = a.get("end_y_pt")
+        source_multiline = bool(
+            a.get("same_visual_line") is False
+            and source_page is not None
+            and source_end_page is not None
+            and (
+                int(source_page) != int(source_end_page)
+                or (
+                    source_y is not None
+                    and source_end_y is not None
+                    and abs(float(source_end_y) - float(source_y)) > 1.5
+                )
+            )
+        )
+        if source_multiline and b.get("overflows_text_right") is True:
+            report["visual_wrap_loss_candidates"].append({
+                "ordinal": ordinal,
+                "reason": "source_multiline_working_ole_crosses_measured_text_boundary",
+                "repair_class": "M2_SOURCE_VISUAL_WRAP_LOSS",
+                "source_page": source_page,
+                "source_end_page": source_end_page,
+                "source_y_pt": source_y,
+                "source_end_y_pt": source_end_y,
+                "working_page": b.get("page"),
+                "working_width_pt": b.get("width_pt"),
+                "working_right_edge_pt": b.get("right_edge_pt"),
+                "working_text_right_pt": b.get("text_right_pt"),
+                "working_right_overflow_pt": b.get("right_overflow_pt"),
+                "auto_apply": False,
+                "next_tool": "export_source_visual_lines.ps1",
+                "repair_tool": "repair_axmath_from_approved_tex.ps1",
             })
 
         source_fmt = a.get("paragraph_format") or {}
@@ -260,16 +325,15 @@ def audit(source_snapshot: dict, working_docx: Path):
             broken_members.update(ordinals)
 
     # AxMath -> TeX roundtrip has been observed to drop prime/derivative
-    # semantics while still yielding a syntactically valid donor. Flag those
-    # members of broken same-line groups so GPT prefers frozen-source semantic
-    # rebuild instead of blindly roundtripping the working AxMath object.
-    prime_chars = {"′", "″", "‴", "⁗"}
+    # semantics while still yielding a syntactically valid donor. Keep the
+    # broken-same-line risk queue, while prime_semantic_candidates above covers
+    # all prime formulas even when geometry looks normal.
     for ordinal in sorted(broken_members):
         row = by_ord.get(ordinal)
         if not row:
             continue
         source_text = str(row["source"].get("text") or "")
-        if any(ch in source_text for ch in prime_chars):
+        if contains_prime_or_derivative_marker(source_text):
             report["roundtrip_semantic_risk_candidates"].append({
                 "ordinal": ordinal,
                 "reason": "source_contains_prime_or_derivative_marker",
@@ -336,8 +400,14 @@ def audit(source_snapshot: dict, working_docx: Path):
     report["semantic_rebuild_ordinals"] = [
         x["ordinal"] for x in report["semantic_rebuild_candidates"]
     ]
+    report["prime_semantic_ordinals"] = [
+        x["ordinal"] for x in report["prime_semantic_candidates"]
+    ]
     report["roundtrip_semantic_risk_ordinals"] = [
         x["ordinal"] for x in report["roundtrip_semantic_risk_candidates"]
+    ]
+    report["visual_wrap_loss_ordinals"] = [
+        x["ordinal"] for x in report["visual_wrap_loss_candidates"]
     ]
     report["planned_same_line_breaks"] = [
         g for g in report["same_line_breaks"]
@@ -349,6 +419,7 @@ def audit(source_snapshot: dict, working_docx: Path):
     report["strict_layout_ok"] = bool(
         not report["center_alignment_breaks"]
         and not report["unresolved_same_line_breaks"]
+        and not report["visual_wrap_loss_candidates"]
     )
     return report
 
@@ -376,8 +447,12 @@ def main():
         "calibration_ordinals": report.get("calibration_ordinals", []),
         "semantic_rebuild_candidate_count": len(report.get("semantic_rebuild_candidates", [])),
         "semantic_rebuild_ordinals": report.get("semantic_rebuild_ordinals", []),
+        "prime_semantic_candidate_count": len(report.get("prime_semantic_candidates", [])),
+        "prime_semantic_ordinals": report.get("prime_semantic_ordinals", []),
         "roundtrip_semantic_risk_count": len(report.get("roundtrip_semantic_risk_candidates", [])),
         "roundtrip_semantic_risk_ordinals": report.get("roundtrip_semantic_risk_ordinals", []),
+        "visual_wrap_loss_count": len(report.get("visual_wrap_loss_candidates", [])),
+        "visual_wrap_loss_ordinals": report.get("visual_wrap_loss_ordinals", []),
         "unresolved_same_line_breaks": len(report.get("unresolved_same_line_breaks", [])),
         "out": str(Path(args.out).resolve()),
     }, ensure_ascii=True, indent=2))

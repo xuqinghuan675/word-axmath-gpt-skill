@@ -140,6 +140,52 @@ def _paragraph_format(rng):
     }
 
 
+
+def _paragraph_text_bounds(rng):
+    """Measure the page-text boundary without arbitrary width thresholds.
+
+    Table cells and multi-column sections are intentionally left unresolved:
+    using a guessed page width there would recreate the old false-positive
+    failure mode. M2 wrap-loss detection only auto-queues formulas whose OLE
+    objectively crosses a reliable single-column paragraph boundary.
+    """
+    rec = {
+        "text_left_pt": None,
+        "text_right_pt": None,
+        "text_width_pt": None,
+        "text_bounds_reliable": False,
+        "text_bounds_reason": None,
+    }
+    try:
+        if int(rng.Tables.Count) > 0:
+            rec["text_bounds_reason"] = "table_cell_requires_visual_review"
+            return rec
+    except Exception:
+        pass
+    try:
+        section = rng.Sections.Item(1)
+        setup = section.PageSetup
+        if int(setup.TextColumns.Count) != 1:
+            rec["text_bounds_reason"] = "multi_column_section_requires_visual_review"
+            return rec
+        fmt = rng.Paragraphs.Item(1).Format
+        page_width = float(setup.PageWidth)
+        left = float(setup.LeftMargin) + float(fmt.LeftIndent)
+        right = page_width - float(setup.RightMargin) - float(fmt.RightIndent)
+        if right <= left:
+            rec["text_bounds_reason"] = "invalid_measured_bounds"
+            return rec
+        rec.update({
+            "text_left_pt": left,
+            "text_right_pt": right,
+            "text_width_pt": right - left,
+            "text_bounds_reliable": True,
+            "text_bounds_reason": "single_column_page_setup",
+        })
+    except Exception as exc:
+        rec["text_bounds_reason"] = "measurement_failed:" + type(exc).__name__
+    return rec
+
 def _source_inline_context(doc, rng):
     """Return conservative evidence that native OfficeMath is inline."""
     try:
@@ -221,6 +267,7 @@ def _collect_com_inventory(doc):
             rec["paragraph_start"] = None
         rec.update(_source_inline_context(doc, r))
         rec["paragraph_format"] = _paragraph_format(r)
+        rec.update(_paragraph_text_bounds(r))
         items["omath"].append(rec)
 
     ax_idx = 0
@@ -255,6 +302,17 @@ def _collect_com_inventory(doc):
         except Exception:
             rec["paragraph_start"] = None
         rec["paragraph_format"] = _paragraph_format(r)
+        rec.update(_paragraph_text_bounds(r))
+        x = rec.get("x_pt")
+        right = rec.get("text_right_pt")
+        if rec.get("text_bounds_reliable") and x is not None and right is not None:
+            rec["right_edge_pt"] = float(x) + float(rec["width_pt"])
+            rec["right_overflow_pt"] = rec["right_edge_pt"] - float(right)
+            rec["overflows_text_right"] = rec["right_overflow_pt"] > 2.0
+        else:
+            rec["right_edge_pt"] = None
+            rec["right_overflow_pt"] = None
+            rec["overflows_text_right"] = None
         items["axmath"].append(rec)
     return items
 

@@ -7,6 +7,16 @@ param(
   [switch]$OverwriteOutput
 )
 $ErrorActionPreference='Stop'
+function Get-AxMathShapes($d){
+  $arr=@()
+  $collection=$d.InlineShapes
+  for($i=1;$i -le [int]$collection.Count;$i++){
+    $s=$collection.Item($i)
+    try{if([string]$s.OLEFormat.ProgID -eq 'Equation.AxMath'){$arr += $s}}catch{}
+  }
+  return $arr
+}
+
 $InputFull=[IO.Path]::GetFullPath($InputDocx)
 $OutputFull=[IO.Path]::GetFullPath($OutputDocx)
 if([string]::Equals($InputFull,$OutputFull,[StringComparison]::OrdinalIgnoreCase)){throw 'Refusing to overwrite the input DOCX.'}
@@ -85,15 +95,13 @@ try{
   $doc.Activate()
   Start-Sleep -Milliseconds 300
 
-  $initial=@()
-  foreach($s in $doc.InlineShapes){try{if($s.OLEFormat.ProgID -eq 'Equation.AxMath'){$initial+=$s}}catch{}}
+  $initial=@(Get-AxMathShapes $doc)
   $result.axmath_before=$initial.Count
 
   foreach($ord in $targets){
     $rec=[ordered]@{ordinal=$ord;success=$false}
     try{
-      $ax=@()
-      foreach($s in $doc.InlineShapes){try{if($s.OLEFormat.ProgID -eq 'Equation.AxMath'){$ax+=$s}}catch{}}
+      $ax=@(Get-AxMathShapes $doc)
       if($ord -lt 1 -or $ord -gt $ax.Count){throw "ordinal $ord out of range 1..$($ax.Count)"}
       $t=$ax[$ord-1]
       $start=[int]$t.Range.Start
@@ -112,8 +120,7 @@ try{
       $rec.seconds=$sw.Elapsed.TotalSeconds
       Start-Sleep -Milliseconds 200
 
-      $ax2=@()
-      foreach($s in $doc.InlineShapes){try{if($s.OLEFormat.ProgID -eq 'Equation.AxMath'){$ax2+=$s}}catch{}}
+      $ax2=@(Get-AxMathShapes $doc)
       if($ax2.Count -ne $initial.Count){throw "AxMath count changed $($initial.Count) -> $($ax2.Count)"}
       $repl=$null
       foreach($s in $ax2){
@@ -137,8 +144,7 @@ try{
   }
 
   $doc.Save()
-  $final=@()
-  foreach($s in $doc.InlineShapes){try{if($s.OLEFormat.ProgID -eq 'Equation.AxMath'){$final+=$s}}catch{}}
+  $final=@(Get-AxMathShapes $doc)
   $result.axmath_after=$final.Count
   $result.pages=[int]$doc.ComputeStatistics(2)
   $result.success=($result.failed.Count -eq 0 -and $final.Count -eq $initial.Count)

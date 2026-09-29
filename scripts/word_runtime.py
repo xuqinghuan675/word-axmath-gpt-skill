@@ -19,6 +19,8 @@ class WordSessionMeta:
     forced_cleanup: bool = False
     quit_error: str | None = None
     cleanup_error: str | None = None
+    refused_unowned_attach: bool = False
+    ambiguous_created_pids: list[int] | None = None
 
     def to_dict(self):
         return asdict(self)
@@ -57,47 +59,117 @@ class OwnedWord:
 
         pythoncom.CoInitialize()
         self._coinit = True
-        self.app = win32com.client.DispatchEx("Word.Application")
-        self.app.Visible = self.visible
-        self.app.DisplayAlerts = 0
+        try:
+            # DispatchEx is requested specifically so a user Word session can
+            # remain open. Word can nevertheless reuse a pre-existing hidden
+            # /Automation server. Therefore ownership must be proven by PID
+            # before we touch Visible/alerts/options or open a document.
+            self.app = win32com.client.DispatchEx("Word.Application")
+            time.sleep(0.25)
 
-        # Prefer process-diff to identify the isolated WINWORD process. Some
-        # Word builds do not expose a useful HWND immediately after DispatchEx.
-        time.sleep(0.25)
-        after = self._word_pids()
-        created = [pid for pid in after if pid not in before]
-        if len(created) == 1:
-            self.meta.pid = int(created[0])
+            after = self._word_pids()
+            created = [pid for pid in after if pid not in before]
+            self.meta.ambiguous_created_pids = list(created)
+
+            hwnd_pid = None
+            try:
+                hwnd = int(self.app.Hwnd)
+                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                self.meta.hwnd = hwnd
+                if pid:
+                    hwnd_pid = int(pid)
+            except Exception:
+                pass
+
+            owned_pid = None
+            if hwnd_pid is not None and hwnd_pid not in before:
+                owned_pid = hwnd_pid
+            elif len(created) == 1:
+                owned_pid = int(created[0])
+
+            if owned_pid is None:
+                self.meta.pid = hwnd_pid
+                self.meta.owned_pid = False
+                self.meta.refused_unowned_attach = True
+
+                # Critical safety rule: an unowned COM proxy must never receive
+                # Quit(), Visible, DisplayAlerts, document opens, or any other
+                # mutation. Merely release this proxy and fail the attempt.
+                self.app = None
+                gc.collect()
+                gc.collect()
+                if self._coinit:
+                    pythoncom.CoUninitialize()
+                    self._coinit = False
+                raise RuntimeError(
+                    "Could not prove a distinct task-owned WINWORD process; "
+                    f"preexisting={before}, created={created}, hwnd_pid={hwnd_pid}. "
+                    "Refusing to attach to or mutate a pre-existing Word instance."
+                )
+
+            self.meta.pid = owned_pid
             self.meta.owned_pid = True
-        try:
-            self.app.ScreenUpdating = False
-        except Exception:
-            pass
-        try:
-            self.app.Options.SaveNormalPrompt = False
-        except Exception:
-            pass
-        try:
-            self._normal_saved_before = bool(self.app.NormalTemplate.Saved)
-        except Exception:
-            self._normal_saved_before = None
 
-        try:
-            hwnd = int(self.app.Hwnd)
-            _, pid = win32process.GetWindowThreadProcessId(hwnd)
-            self.meta.hwnd = hwnd
-            if not self.meta.pid and pid:
-                self.meta.pid = int(pid)
-                self.meta.owned_pid = int(pid) not in before
+            self.app.Visible = self.visible
+            self.app.DisplayAlerts = 0
+            try:
+                self.app.ScreenUpdating = False
+            except Exception:
+                pass
+            try:
+                self.app.Options.SaveNormalPrompt = False
+            except Exception:
+                pass
+            try:
+                self._normal_saved_before = bool(self.app.NormalTemplate.Saved)
+            except Exception:
+                self._normal_saved_before = None
+            return self.app, self.meta
         except Exception:
-            pass
-        return self.app, self.meta
+            # __exit__ is not called when __enter__ fails. If ownership was
+            # already proven, clean only that PID; otherwise never issue Quit.
+            app = self.app
+            pid = self.meta.pid
+            if app is not None and self.meta.owned_pid:
+                try:
+                    app.DisplayAlerts = 0
+                except Exception:
+                    pass
+                try:
+                    app.Quit()
+                except Exception:
+                    pass
+            self.app = None
+            app = None
+            gc.collect()
+            gc.collect()
+            if pid and self.meta.owned_pid and psutil.pid_exists(pid):
+                try:
+                    proc = psutil.Process(pid)
+                    proc.terminate()
+                    try:
+                        proc.wait(4)
+                    except psutil.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(4)
+                    self.meta.forced_cleanup = True
+                except psutil.NoSuchProcess:
+                    pass
+                except Exception as cleanup_exc:
+                    self.meta.cleanup_error = repr(cleanup_exc)
+            if self._coinit:
+                try:
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    pass
+                self._coinit = False
+            raise
 
     def __exit__(self, exc_type, exc, tb):
         app = self.app
         pid = self.meta.pid
 
-        if app is not None:
+        if app is not None and self.meta.owned_pid:
             try:
                 if self._normal_saved_before is True and not bool(app.NormalTemplate.Saved):
                     app.NormalTemplate.Saved = True

@@ -1,141 +1,195 @@
-# Word → AxMath GPT Skill
+# word-axmath-gpt-skill
 
-给 **Windows + Microsoft Word + 已激活 AxMath** 用的 GPT Skill。
+把 Microsoft Word 原生 OfficeMath / OMML 批量转换为真实可编辑的 `Equation.AxMath`，并使用冻结源稿、确定性故障分类和逐页视觉验收完成生产级收口。
 
-用途很简单：让 GPT 把 Word 里的 OfficeMath 批量转换成真正可编辑的 AxMath，然后按照原稿检查并修复行内/行间、大小、换行、外框和预览异常。
+## 最重要的一句话
 
-## 宝宝最简单的用法
+**不要转换完就开始猜。必须先读 `SKILL.md`，然后运行 `diagnose_after_conversion.py`，按 `NEXT_ACTION.json` 的 repair class 走。**
 
-### 1. 下载/克隆仓库
+正式流程只有一条：
 
-```powershell
-git clone https://github.com/xuqinghuan675/word-axmath-gpt-skill.git
-cd word-axmath-gpt-skill
-python -m pip install -r requirements.txt
-```
+> 冻结源稿 → 官方转换一次 → 确定性诊断 → 当前类唯一修复路线 → 重新诊断 → 最终逐页验收
 
-### 2. 直接告诉 GPT
+新对话不得从旧聊天记忆、页数差、公式宽度印象或历史报告直接发明修复。
 
-把 Word 文件路径给 GPT，然后说：
+## 快速开始
 
-> 先读取这个仓库的 SKILL.md。把这个 Word 的 OfficeMath 转成 AxMath，原文件不要改；先按 Skill 在旁边建立工作区并一键转换，转换完成后继续按 Skill 对照原稿排查和修复。最后必须 fresh Word/PDF 严格逐页对照原稿做视觉比对，不能只抽查；原稿居中的公式最终也必须保持居中。
-
-就可以了。
-
-不需要自己研究脚本，也不需要自动打开新的 GPT 对话。
-
-## 手动一键转换（可选）
-
-```powershell
-python scripts\one_click_convert.py --input "C:\path\to\document.docx"
-```
-
-程序会先检查文件状态，然后在原文件旁边创建：
-
-```text
-document_AxMath-workspace\
-  run-YYYYMMDD-HHMMSS\
-    SOURCE_STATE.json
-    READY_FOR_GPT_REVIEW.json
-    document\
-      source\
-      working\
-      logs\
-```
-
-转换完成后，让 GPT 读取 `READY_FOR_GPT_REVIEW.json` 和 `SKILL.md` 继续检查即可。
-
-## 环境要求
-
-- Windows
-- Microsoft Word
-- AxMath 已安装并激活
-- Python 3.10+
-- GPT/Agent 能访问本机文件和运行命令
-
-Python 依赖：
+### 1. 安装依赖
 
 ```powershell
 python -m pip install -r requirements.txt
 ```
 
-## 这套流程解决什么
+依赖包括 `pywin32`、`PyMuPDF`、`omml2latex` 等。不要跑完大文档后才发现渲染/OMML fallback 缺包。
 
-- OfficeMath → 真正的 `Equation.AxMath` 可编辑对象
-- 批量转换
-- 源文件只读保护
-- 行内公式被错误转成巨大 display 公式
-- 转换后公式掉到下一行
-- AxMath 内部类型/尺寸异常
-- Word OLE 外框 width/height/baseline 异常
-- preview/OLE 缓存问题
-- 原稿居中的公式转换后偏左/偏右
-- 最后 fresh Word/PDF 与原稿 **逐页严格视觉比对**，不是抽查
-- 最终视觉通过会绑定 source/final DOCX 哈希和每页并排图哈希；文件之后变化，旧视觉通过自动失效
-
-其中已经验证过的一条关键修复是：
-
-> AxMath → `AMSAM2TeX` → 强制单 `$...$` 行内 LaTeX → `AMSTeX2AM`
-
-用于修复“原稿明明是行内公式，批量转换后却变成巨大行间公式”的情况。
-
-## 为什么大文档转换会慢
-
-这里的主要瓶颈不是 Python，也不是 GPT 在“等”。AxMath 2.7.0.58 的 Word 插件会自己把 `AMSMML2AM` 转换拆成约 **64~66 个公式/批**，前端提示其目的就是避免 Word 无响应；脚本只是识别每批完成、保存进度，再继续下一批。
-
-已经有两组实测：
-
-- 早期 768 公式文档：官方单次全选只转换 66 个；自动循环 12 批才完成。
-- 1335 公式正式文档：21 批完成，`AMSMML2AM` 宏本身累计约 **6718.6 秒 / 总 6785.0 秒 = 99.02%**，约 **5.03 秒/公式**。
-
-因此不能靠“把 66 改成 200”“绕过 `WaitingConvert`”“并行点同一份 Word”“去掉每批保存”来提速。历史大文档转换还出现过 AxMath.exe crash dump，而批次保存让任务可以把已经完成的批次落盘；这些是稳定性设计，不是多余等待。
-
-当前转换报告会记录每批宏耗时、保存耗时、新 crash dump，以及宏耗时占比。真正要继续提速，应先用这些数据定位 AxMath 插件内部的慢批次；在没有新的可复现证据前，不改官方批处理语义。
-
-修复阶段也避免重复做完整文档渲染：中间轮次优先 geometry audit + 异常公式/异常页定向检查；完整 source/final fresh render + 每页并排图保留给最终验收。
-
-中间 source 几何证据可直接使用：
+### 2. 预检
 
 ```powershell
-python scripts\snapshot_docx.py "<frozen-source.docx>" "<review\source_geometry>" --profile geometry
+python scripts\one_click_convert.py --input "<源.docx>" --inspect-only
 ```
 
-`geometry` profile 仍读取真实 Word COM 公式位置/段落信息并做 DOCX 前后 SHA 校验，但跳过 PDF/逐页 PNG、1335 个公式 crop 和 preview 媒体提取。`snapshot_docx.py` 默认仍是 `full`；`strict_final_compare.py` 不传 profile，因此最终全页验收行为不变。
+预检会同时检查：Word/AxMath 数量、段落、锁文件、现有 Word PID、OMML 多 sibling 结构、Python 依赖、PowerShell、`AxMath.dotm`。
 
-## 安全规则
+### 3. 转换一次
 
-- 不覆盖原始 DOCX；所有写入脚本都拒绝 input=output，已有输出默认也不覆盖
-- 已有用户 Word 不是自动停止条件：记录现有 PID，使用独立的任务自有 Word 会话继续；只能关闭/杀掉任务自有 Word，绝不能碰用户已有 Word
-- Word 锁文件只作为状态记录，不再单独阻断；只要磁盘上的 source 可读，就冻结副本并用前后 SHA 校验，若运行期间 source 发生变化则验收失败
-- 前台/后台切换、保存/另存为、任务自身弹窗、重试、检测/修复、逐页验收和任务进程清理由 GPT 自己完成，不因需要 UI 操作把步骤甩回用户
-- frozen source 即使只读也不改原稿；复制出的 working copy 会清除继承的只读属性，避免首个 AxMath batch 后触发“另存为”
-- 只清理由本任务自己创建的 Word 进程
-- 不靠固定宽度阈值判断公式是否正确
-- 不自动打开/新建 GPT 网页对话
-- 不包含任何用户文档、日志、账号、凭据或个人路径
+```powershell
+python scripts\one_click_convert.py --input "<源.docx>"
+```
 
-## 主要文件
+源文件不会被覆盖。工作区会保存 frozen source、working copy、转换报告和恢复边界。
 
-- `SKILL.md`：GPT 必读规则
-- `scripts/one_click_convert.py`：预检 + 邻接工作区 + 一键转换
-- `scripts/run_skill.py`：受保护的转换执行器
-- `scripts/snapshot_docx.py`：原稿/改稿取证
-- `scripts/formula_geometry_audit.py`：公式几何与 inline 意图检查
-- `scripts/repair_axmath_inline_roundtrip.ps1`：行内/display 局部修复；只处理 GPT 已确认的 culprit，单次最多 12 个，禁止把 broken same-line group 整组无脑 roundtrip
-- `scripts/rebuild_axmath_baselines.ps1`：Class B 内部指标**局部 probe**（每次最多 3 个明确 ordinal；禁止批量重建）
-- `scripts/export_source_word_latex.ps1`：从 frozen source 只读导出指定 ordinal 的 Word LaTeX，带 source SHA 前后校验
-- `scripts/repair_axmath_from_approved_tex.ps1`：把 GPT 已批准的 `{ordinal, tex}` map 写回新的 working 副本；不猜公式语义，逐个保存并保持 AxMath/OfficeMath/paragraph count
-- `scripts/calibrate_axmath_boxes.py`：Word 外部 OLE 框校准
-- `scripts/strict_final_compare.py`：最终 source-vs-final 每页并排图 + 内容/结构诊断 + 视觉复核模板
-- `scripts/finalize_visual_review.py`：校验逐页视觉复核清单与文件/图片哈希，只有它输出 `acceptance_pass=true` 才算最终通过
-- `scripts/repo_selfcheck.py`：跨平台静态自检，检查 Python 语法和关键安全/验收契约
+### 4. 强制诊断入口
 
-语义损坏或直接 OMML→AxMath donor 已经塌缩时，优先从 frozen source 的同 ordinal 公式重建：Word 导出 LaTeX → 归一化 Word 特有 LaTeX → AxMath `AMSTeX2AM`。源公式真实跨多行时保留 source-derived line breaks，用 `aligned` 类结构重建，不靠缩小 OLE 外框硬塞回一行。
+读取 `READY_FOR_GPT_REVIEW.json` 中的 frozen source / working 路径，然后：
 
-`formula_geometry_audit.py` 会额外列出两种 GPT review queue：`semantic_rebuild_candidates` 用于“非平凡 source 表达式却落进 tiny AxMath shell”的疑似语义塌缩；`roundtrip_semantic_risk_candidates` 用于 broken same-line group 里含 prime/导数标记的公式。这两类都不自动改文档，前者先视觉确认，后者优先走 frozen-source semantic rebuild。历史正式文档已证明 `AMSAM2TeX` 可能把 `f′(x)` 静默变成 `f`，所以不能再用“宏调用成功”代替语义验收。
+```powershell
+python scripts\diagnose_after_conversion.py --source "<frozen-source.docx>" --working "<working.docx>" --outdir "<review>"
+```
 
-AxMath 的 `AxMath.dotm` 会从常见 Program Files 位置自动寻找；如果安装在其他位置，GPT 可以给 PowerShell 脚本显式传 `-TemplatePath`。
+只按 `NEXT_ACTION.json` 执行。每次修复必须输出到新的 DOCX，再重新诊断。
 
----
+默认诊断是 **静态 XML 快筛 + 只对疑点做 Word 证实**，不会每轮用 COM 扫 1500+ 个公式。只有最终/source-vs-working 视觉证据发现难分类异常时，才显式加 `--deep-geometry` 做全量几何诊断。
 
-这是简化后的生产版，不包含旧的 Web-GPT/Watchdog 自动唤醒流程。
+## 已覆盖的生产故障
+
+### M1：`m:oMathPara` 多 sibling 被 AxMath 合并
+
+典型症状：源稿 raw OfficeMath 数比 AxMath 多，但差值恰好等于 frozen source 中多 sibling display group 的 extra nodes。
+
+这不是“随机丢公式”。`source_math_structure.py` 会在转换前就记录这个结构，`audit_docx.py` 会把它分类成 `known_multisibling_collapse`。
+
+```powershell
+python scripts\build_source_tex_map.py multisibling --source "<source>" --working "<working>" --out "<m1.json>"
+powershell -File scripts\repair_multisibling_groups.ps1 -InputDocx "<working>" -OutputDocx "<m1-fixed>" -MapPath "<m1.json>"
+```
+
+M1 是唯一允许“1 个塌缩 AxMath → 多个 AxMath”的类，因为 frozen source 自身就包含多个 raw OfficeMath 子对象。
+
+### M2：超长公式失去 Word 自动换行，右侧冲出页面
+
+检测不使用固定宽度阈值。只有同时满足：
+
+- source OfficeMath 在 Word 中真实跨视觉行；
+- working AxMath OLE 越过实测的单栏正文右边界；
+
+才进入 M2。
+
+```powershell
+powershell -File scripts\export_source_visual_lines.ps1 -SourceDocx "<frozen-source>" -Ordinals "<ordinals>" -OutputJson "<lines.json>"
+python scripts\build_source_tex_map.py visual-wrap --visual-report "<lines.json>" --working "<working>" --out "<m2.json>"
+powershell -File scripts\repair_axmath_from_approved_tex.ps1 -InputDocx "<working>" -OutputDocx "<m2-fixed>" -MapPath "<m2.json>"
+```
+
+修复器把 source-derived visual lines 合成一个 `aligned` TeX donor。
+
+**M2-A 约束：** 当 contract 是内部 `aligned` 多行 AxMath 时，1 个 source 公式保持 1 个 AxMath；不要把这条规则套到所有长公式。
+
+十三月实机已验证 M2-A：三行 synthetic `aligned` 和真实四行长公式都经 `AMSTeX2AM` 得到 exactly one `Equation.AxMath`。
+
+**M2-B：按原稿视觉数学行恢复多个 AxMath。** `待排版5` 的 24 个长公式段落实修证明，有些位置需要“每个原稿视觉行一个 AxMath + Word soft break”才能稳定还原原版。此时 AxMath 对象数增加是预期行为，但必须有 hash-bound repair ledger。
+
+```powershell
+python scripts\diagnose_local_layout.py --source "<frozen-source>" --working "<working>" --start-anchor "<唯一文字锚点>" --outdir "<review>"
+python scripts\build_source_tex_map.py visual-line-split --visual-report "<visual-lines.json>" --working "<working>" --paragraph-plan "<LOCAL_LAYOUT_PLAN.json>" --out "<split-map.json>"
+powershell -File scripts\repair_visual_line_split.ps1 -InputDocx "<working>" -OutputDocx "<split-fixed>" -MapPath "<split-map.json>"
+python scripts\validate_local_visual_line_repair.py --baseline "<working>" --candidate "<split-fixed>" --map "<split-map.json>" --out "<split-ledger.json>"
+```
+
+M2-B 的断行点只能来自 frozen source 的真实视觉行，禁止按字符数、屏幕宽度、像素位置或猜测的等号机械切割。ledger 必须证明：锚点前前缀未变、非数学正文未变、源稿 SHA 未变、每个目标段的 AxMath/soft-break 数符合 source visual line、总 AxMath 增量精确匹配 map。最终 `strict_final_compare.py` 必须通过 `--repair-ledger` 接受这类 intentional split。
+
+### Class D / E：页面预览正常，但双击 AxMath 后变短、变成别的公式
+
+先判断是 preview/cache 错还是 OLE 内部语义真坏：
+
+```powershell
+powershell -File scripts\inspect_axmath_tex.ps1 -InputDocx "<working>" -Ordinals "<targets>" -OutputJson "<internal.json>"
+```
+
+它只在临时复制对象上运行 `AMSAM2TeX`，不会改 working。
+
+- internal 正确、preview 错 → Class D;
+- internal 短/错/不相关 → Class E，从 frozen source 同 ordinal 重建;
+- prime/derivative 是独立语义风险，不要求先出现版式异常。所有 `' / ′ / ″ / ‴ / ⁗` 源公式都进入 `prime_semantic_candidates`，走 frozen-source Class E。AxMath 2.7.0.58 已实机确认：一阶 `\prime`、二阶 `''`、三阶 `'''`；raw Unicode `‴` 直接喂给 `AMSTeX2AM` 会回转成 `?`。先用 `normalize_axmath_tex.py` 归一化，写回前还要由真实 AxMath 再 round-trip 验证 prime 阶数。
+
+Word LaTeX 导出也不能因为“非空”就相信。实测出现过 control chars、`▒`、`〖〗`、错误线性表示。`build_source_tex_map.py` 会校验；坏输出回退到 frozen OMML → LaTeX。
+
+## 昨天真实踩坑已经写入设计
+
+- `after_omath=0` 可能只是控制文件占位，不能当转换完成信号。
+- Chinese path + legacy console encoding 不能把输出错误误判成文档错误；CLI 强制 UTF-8。
+- `$PID` 是 PowerShell 保留变量，脚本统一用 `$wordPid`。
+- Word COM 的 `InlineShapes` 在 PowerShell 下不能可靠用 `foreach`：同一份 1521-shape 文档实测，显式 `.Count/.Item(i)` 得到 1520 个 AxMath，而 `foreach` 得到 0；生产脚本统一改为索引枚举，并禁止 `return ,@($arr)` 再被外层 `@(...)` 包成单元素嵌套数组。
+- `DispatchEx("Word.Application")` 也不能单独当“新进程证明”。实测 Word 可以复用已有 headless `/Automation -Embedding` server；`OwnedWord` 现在必须先证明出现新的独立 WINWORD PID，证明不了就只释放代理并失败，绝不 `Quit()`、绝不改已有 Word。
+- `Get-FileHash` 对仍有 Office/OLE 共享句柄的 DOCX 可能报“being used by another process”，即使 ZIP/Python 仍能读取；修复脚本统一用允许 `ReadWrite|Delete` 共享的只读 SHA-256 流，避免把共享锁误判成文件损坏。
+- Program Files x86 不能用错误的 unbraced env 语法。
+- source `OMath.Range` 与 AxMath add-in 操作混在一个长 COM 生命周期里会出现 `PROPERTYGET` / `0x800706BE`；source reading 和 AxMath mutation 分阶段，困难 source extraction 按 ordinal 隔离 Word 实例。
+- live original 可能被 Word 独占导致 hash 失败；语义修复统一基于 frozen source。
+- Phase A 的 64–66 公式批量是 AxMath 稳定性机制，不是性能 knob。
+- page count 只能当验收观察，不能用来指导 width/height/w:position 猜参数。
+- 中间循环默认使用静态 XML + 疑点 Word 定向证明；全量 geometry audit 只在显式 `--deep-geometry` 升级时运行，完整 PDF + 每页对照只留最终一次。
+
+## 工具地图
+
+| 任务 | 工具 |
+|---|---|
+| Source OMML 结构 / M1 signature | `source_math_structure.py` |
+| 内容、段落、公式计数 | `audit_docx.py` |
+| 强制 repair dispatcher | `diagnose_after_conversion.py` |
+| 中间 source/working 几何证据 | `snapshot_docx.py --profile geometry` |
+| same-line / tiny shell / M2 overflow / box 诊断 | `formula_geometry_audit.py` |
+| M1 frozen-source map | `build_source_tex_map.py multisibling` |
+| M1 repair | `repair_multisibling_groups.ps1` |
+| M2 source visual lines | `export_source_visual_lines.ps1` |
+| M2-A aligned map | `build_source_tex_map.py visual-wrap` |
+| M2-B 局部锚点/段落映射 | `diagnose_local_layout.py` / `build_local_layout_plan.py` |
+| M2-B visual-line map | `build_source_tex_map.py visual-line-split` |
+| M2-B repair / ledger | `repair_visual_line_split.ps1` / `validate_local_visual_line_repair.py` |
+| Class E source Word LaTeX | `export_source_word_latex.ps1` |
+| Prime donor 规范化 | `normalize_axmath_tex.py` |
+| Prime 真实 AxMath contract probe | `probe_axmath_prime_contract.ps1` |
+| Prime 写回硬门 | `axmath_prime_contract.ps1` |
+| M2 / Class E single-object repair | `repair_axmath_from_approved_tex.ps1` |
+| AxMath internal content diagnostic | `inspect_axmath_tex.ps1` |
+| Low-risk inline Class A | `repair_axmath_inline_roundtrip.ps1` |
+| Class B probe only | `rebuild_axmath_baselines.ps1` |
+| Class C OLE shell | `calibrate_axmath_boxes.py` |
+| Final full source-vs-final | `strict_final_compare.py` |
+| Hash-bound final acceptance | `finalize_visual_review.py` |
+
+## 性能
+
+Phase A 真正耗时主要在 AxMath 宏内部。历史 1335 公式生产跑约 99.02% 时间在 `AMSMML2AM`；另一份 1574 公式文档实际转换约 32 分 40 秒、24 批。
+
+因此优化重点不是绕过 batch safety，而是把后处理从“人工猜 bug”变成自动分类和唯一 repair route：
+
+- 预先记录 M1 结构；
+- 只在 count exact 后做 geometry；
+- M2 用 source visual line + measured overflow；
+- Class D/E 先辨 internal vs preview;
+- repair iteration 不全页渲染；
+- final 只 full-render 一次。
+
+## 禁止事项
+
+- 不覆盖 source / finished file。
+- 不全局调 width/height/w:position。
+- 不为了页数相等缩公式。
+- 不允许**未经 frozen-source 视觉行证据与 repair ledger 验证**就把一个 M2 source 公式拆成多个 AxMath；M2-B 是有证据的正式路线，不属于碰运气拆分。
+- 不拿坏 AxMath 自己导出的 TeX 作为 Class E 语义真源。
+- 不因 same-line group 报警就整组 roundtrip。
+- 不在正式文档上做参数搜索。
+- 不杀用户已有 Word。
+
+## 最终验收
+
+```powershell
+python scripts\strict_final_compare.py --source "<frozen-source>" --final "<final>" --outdir "<compare>" --expected-source-sha256 "<sha>"
+```
+
+然后必须逐页检查所有 source-vs-final 图片，再：
+
+```powershell
+python scripts\finalize_visual_review.py --report "<compare>\STRICT_FINAL_COMPARE.json" --review "<compare>\VISUAL_REVIEW.json"
+```
+
+只有 `acceptance_pass=true` 才是正式完成。

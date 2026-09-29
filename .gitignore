@@ -16,3 +16,5 @@ venv/
 *.conversion.json
 *.skill-report.json
 *.control.json
+
+.tmp-regression/
