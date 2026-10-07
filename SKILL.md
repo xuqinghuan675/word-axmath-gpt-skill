@@ -404,3 +404,34 @@ Visual layout is the final acceptance authority. Geometry/centering/same-line di
 - no task-created Word/AxMath process remains.
 
 Ambiguous cases are `needs_human_review`. Never guess, and never turn the formal document into a parameter-search sandbox.
+
+
+## 10. Word 页面级视觉属性恢复（新增）
+
+重新生成 DOCX 或 AxMath 转换链不得默认丢弃原稿页面级视觉属性。
+
+若发现：
+- 页面背景色丢失；
+- 页面边框丢失；
+- 页面装饰属性与原稿不一致；
+
+不得手工逐页修改，应从冻结源文档提取并恢复 Word XML 页面属性。
+
+工具：
+
+```powershell
+python scripts\restore_word_page_layout.py --reference "<source.docx>" --target "<working.docx>" --output "<fixed.docx>"
+```
+
+原则：
+- 只恢复页面级属性；
+- 不修改正文 XML；
+- 不触碰 AxMath OLE、OMML、公式内容；
+- 不改变公式数量；
+- 不重新分页。
+
+默认恢复：
+- `w:background`
+- `w:pgBorders`
+
+完成后仍需运行最终视觉检查。
