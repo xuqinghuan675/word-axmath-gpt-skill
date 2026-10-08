@@ -269,7 +269,10 @@ def _execute(args):
         "resume_requested": bool(args.resume),
     }
     final_report.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps(report, ensure_ascii=True, indent=2))
+    # The parent batch entrypoint reads the persisted report directly.
+    # Avoid piping a second multi-megabyte JSON audit through stdout.
+    if not getattr(args, "quiet", False):
+        print(json.dumps(report, ensure_ascii=True, indent=2))
 
     ok = bool(
         p.returncode == 0
@@ -286,6 +289,11 @@ def _execute(args):
         and audit.get("nonmath_text_exact")
         and source_unchanged
     )
+    if ok:
+        # The successful converter/control state is fully included in the
+        # skill report; retain transport files only for failed-run debugging.
+        conv_report.unlink(missing_ok=True)
+        control.unlink(missing_ok=True)
     return 0 if ok else 1
 
 
@@ -296,6 +304,7 @@ def main():
     ap.add_argument("--overwrite-output", action="store_true")
     ap.add_argument("--resume", action="store_true", help="Continue a SHA-bound saved conversion checkpoint")
     ap.add_argument("--watchdog-seconds", type=int, default=1800)
+    ap.add_argument("--quiet", action="store_true", help="Write the normal skill-report.json without duplicating it on stdout")
     args = ap.parse_args()
     if args.watchdog_seconds < 60:
         ap.error("--watchdog-seconds must be >= 60")

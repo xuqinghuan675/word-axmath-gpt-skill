@@ -41,6 +41,14 @@ def _identity(node):
     return etree.tostring(node, method="c14n").decode("utf-8") if node is not None else None
 
 
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def page_style_report(reference: Path, target: Path) -> dict:
     """Static, exact comparison of the page-decoration contract."""
     with zipfile.ZipFile(reference) as z:
@@ -104,12 +112,13 @@ def copy_page_style(reference: Path, target: Path, output: Path) -> dict:
     if not reference.is_file() or not target.is_file():
         raise FileNotFoundError("Reference and target DOCX must both exist.")
 
-    source_bytes = target.read_bytes()
-    input_sha = hashlib.sha256(source_bytes).hexdigest()
+    input_sha = _sha256_file(target)
+    reference_sha = _sha256_file(reference)
     with zipfile.ZipFile(reference) as src, zipfile.ZipFile(target) as dst:
         ref_doc = _xml(src.read("word/document.xml"))
         working_doc = _xml(dst.read("word/document.xml"))
         baseline = deepcopy(working_doc)
+        _strip_page_style(baseline)
         source_sections, target_sections = _sections(ref_doc), _sections(working_doc)
         if len(source_sections) != len(target_sections):
             raise ValueError(
@@ -131,24 +140,14 @@ def copy_page_style(reference: Path, target: Path, output: Path) -> dict:
                 current.remove(old_border)
             _insert_border(current, source_border)
 
-        _strip_page_style(working_doc)
-        _strip_page_style(baseline)
-        if _identity(working_doc) != _identity(baseline):
+        # Validate the undecorated structure on a disposable clone, while
+        # keeping the original decorated tree for the output. No second edit.
+        undecorated = deepcopy(working_doc)
+        _strip_page_style(undecorated)
+        if _identity(undecorated) != _identity(baseline):
             raise RuntimeError("Page restore unexpectedly changed non-page XML structure.")
-        # Rebuild the decorated XML from the original target (not the stripped check).
-        decorated = _xml(dst.read("word/document.xml"))
-        old_bg = decorated.find("w:background", NS)
-        if old_bg is not None:
-            decorated.remove(old_bg)
-        if background is not None:
-            decorated.insert(0, deepcopy(background))
-        for src_section, target_section in zip(source_sections, _sections(decorated)):
-            existing = target_section.find("w:pgBorders", NS)
-            if existing is not None:
-                target_section.remove(existing)
-            _insert_border(target_section, src_section.find("w:pgBorders", NS))
         new_xml = etree.tostring(
-            decorated, xml_declaration=True, encoding="UTF-8", standalone=True
+            working_doc, xml_declaration=True, encoding="UTF-8", standalone=True
         )
         output.parent.mkdir(parents=True, exist_ok=True)
         fd, temporary = tempfile.mkstemp(
@@ -171,17 +170,17 @@ def copy_page_style(reference: Path, target: Path, output: Path) -> dict:
                     raise ValueError("Generated DOCX failed ZIP CRC validation.")
             if not page_style_report(reference, tmp)["equal"]:
                 raise RuntimeError("Page background/borders still differ after restore.")
-            if hashlib.sha256(target.read_bytes()).hexdigest() != input_sha:
-                raise RuntimeError("Target DOCX changed during restore; output not published.")
+            if _sha256_file(target) != input_sha or _sha256_file(reference) != reference_sha:
+                raise RuntimeError("Source or target DOCX changed during restore; output not published.")
             os.rename(tmp, output)  # Windows rename refuses an existing output.
         finally:
             if tmp.exists():
                 tmp.unlink()
     return {
         "status": "restored",
-        "source_sha256": hashlib.sha256(reference.read_bytes()).hexdigest(),
+        "source_sha256": reference_sha,
         "target_sha256_before": input_sha,
-        "target_sha256_after": hashlib.sha256(target.read_bytes()).hexdigest(),
+        "target_sha256_after": _sha256_file(target),
         "output": str(output),
         "page_style": page_style_report(reference, output),
     }

@@ -38,7 +38,7 @@ python scripts\one_click_convert.py --input "<源.docx>"
 
 源文件不会被覆盖。工作区会保存 frozen source、working copy、转换报告和恢复边界。
 
-转换成功后，`one_click_convert.py` 还会自动生成一个新的编号标点规范化 working copy，并把它作为 `READY_FOR_GPT_REVIEW.json` 里的正式 `working_docx`：
+转换成功后，`one_click_convert.py` 只有检测到待规范化的编号才另存 working copy；没有匹配编号时直接复用转换工作稿，避免多复制整份 DOCX。`READY_FOR_GPT_REVIEW.json` 始终给出唯一应继续处理的 `working_docx`：
 
 - `1、` → `1.`
 - `12、` → `12.`
@@ -234,3 +234,14 @@ python scripts\repair_standalone_display_alignment.py --source "<冻结源稿>" 
 此修复只修改确认的公式段落 `w:pPr/w:jc=center`，不碰 AxMath/OLE 嵌入内容，也不强制给所有公式居中。修复后**必须重新逐页视觉验收**。十三月实机已验证 3 个合成独立公式从错误左对齐恢复与原稿一致，并通过 `acceptance_pass=true`。实机验证只覆盖小样本，不代表 4000 公式全书已跑完。
 
 另外，编号无替换时使用字节级复制，避免将包含数千个 OLE 的 DOCX 整体重新压缩；上层会复用已计算的 frozen source 和 working 静态分析结果，减少重复 ZIP/XML 读取。
+
+
+## 2026-10-08 主流程瘦身（不删关键安全门禁）
+
+`SKILL.md` 已精简为每次必读的操作主链，详细 M1/M2/语义/COM 故障经验下沉至 **`docs/REPAIR_REFERENCE.md`**，仅发生异常时再加载。正常路径是：`one_click_convert.py` → 官方宏 → `diagnose_after_conversion.py` → `strict_final_compare.py` → `finalize_visual_review.py`。
+
+正常转换时，`READY_FOR_GPT_REVIEW.json` 是唯一交接状态，`SOURCE_STATE.json` 用于原稿 SHA 绑定/断点续跑。不再重复生成 `RUN_STATE.json`、`CONVERSION_RESULT.json`、成功转换的外层日志/标点日志。无编号变更时不另存第二份 DOCX；转换子进程不重复向 stdout 打印整份审计 JSON，外层复用已验证的审计结果。成功后临时 `.control.json` 和 `.conversion.json` 可由运行器清理；**失败时保留恢复检查点和诊断原件**。旧工作区内的历史文件不清理、不回滚。
+
+快速诊断没有超宽嫌疑时不启动 Word 多行探针，也不生成无用的探针/几何 JSON；没有撇号等高风险时不重复全文件计算审核哈希。视觉复核需要重点关注独立公式居中和集合符号，这些提示不会触发自动错误修复。完整逐页视觉验收保持原样。
+
+回归测试：`python scripts/test_slim_pipeline.py`，随原有 7 套测试进入 CI；**小样本 Word 验收不能代替上千公式和中断续跑压力测试**。

@@ -38,10 +38,10 @@ def _sha256_file(path: Path) -> str:
 
 
 def _prime_review_state(source: Path, working: Path, ordinals: list[int], path: Path | None, outdir: Path) -> dict:
-    source_sha, working_sha = _sha256_file(source), _sha256_file(working)
-    template_path = outdir / "PRIME_REVIEW_TEMPLATE.json"
     if not ordinals:
         return {"verified": True, "required": [], "review": None}
+    source_sha, working_sha = _sha256_file(source), _sha256_file(working)
+    template_path = outdir / "PRIME_REVIEW_TEMPLATE.json"
     template = {
         "schema": "axmath-prime-semantic-review/v1",
         "source_sha256": source_sha,
@@ -192,10 +192,10 @@ def _fast_static_triage(source: Path, working: Path, content: dict, outdir: Path
             })
 
     overwide = list(inv.get("conservative_overwide_candidates") or [])
-    probe = _source_multiline_probe(
-        source, [int(x["ordinal"]) for x in overwide]
-    )
-    _write(outdir / "FAST_SOURCE_MULTILINE_PROBE.json", probe)
+    probe = {"rows": []}
+    if overwide:
+        probe = _source_multiline_probe(source, [int(x["ordinal"]) for x in overwide])
+        _write(outdir / "FAST_SOURCE_MULTILINE_PROBE.json", probe)
     probe_by_ord = {
         int(x["ordinal"]): x
         for x in probe.get("rows") or []
@@ -235,9 +235,12 @@ def _fast_static_triage(source: Path, working: Path, content: dict, outdir: Path
         "semantic_tiny_shell_candidates": tiny,
         "m2_visual_wrap_loss_candidates": m2,
         "overwide_source_singleline_review": overwide_singleline,
-        "source_multiline_probe": str(outdir / "FAST_SOURCE_MULTILINE_PROBE.json"),
+        "source_multiline_probe": (
+            str(outdir / "FAST_SOURCE_MULTILINE_PROBE.json") if overwide else None
+        ),
     }
-    _write(outdir / "FAST_TRIAGE.json", report)
+    if tiny or overwide:
+        _write(outdir / "FAST_TRIAGE.json", report)
     return report
 
 
@@ -276,9 +279,15 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
     outdir.mkdir(parents=True, exist_ok=True)
 
     content = compare(source, working, numbering_scope=numbering_scope)
-    _write(outdir / "CONTENT_AUDIT.json", content)
     count = content.get("formula_count_state") or {}
     state = count.get("state")
+    if (
+        state != "exact"
+        or not content.get("paragraph_count_equal")
+        or not content.get("nonmath_text_contract_exact")
+        or deep_geometry
+    ):
+        _write(outdir / "CONTENT_AUDIT.json", content)
 
     report: dict = {
         "schema": "axmath-post-conversion-diagnosis/v2",
@@ -347,7 +356,13 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
         return report
 
     fast = _fast_static_triage(source, working, content, outdir)
-    report["fast_triage"] = str(outdir / "FAST_TRIAGE.json")
+    report["fast_triage"] = (
+        str(outdir / "FAST_TRIAGE.json")
+        if (fast["semantic_tiny_shell_candidates"]
+            or fast["m2_visual_wrap_loss_candidates"]
+            or fast["overwide_source_singleline_review"])
+        else None
+    )
     fast_queues = {
         "M2_SOURCE_VISUAL_WRAP_LOSS": [
             int(x["ordinal"]) for x in fast["m2_visual_wrap_loss_candidates"]
@@ -362,8 +377,11 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
     report["queues"] = fast_queues
     # Static OMML scan costs no Word COM calls, even for thousands of formulas.
     semantic = scan_source_math(source)
-    _write(outdir / "SOURCE_SEMANTIC_RISKS.json", semantic)
-    report["semantic_risks"] = str(outdir / "SOURCE_SEMANTIC_RISKS.json")
+    if semantic["prime_semantic_candidates"] or semantic["set_symbol_visual_candidates"]:
+        _write(outdir / "SOURCE_SEMANTIC_RISKS.json", semantic)
+        report["semantic_risks"] = str(outdir / "SOURCE_SEMANTIC_RISKS.json")
+    else:
+        report["semantic_risks"] = None
     fast_queues["CLASS_E_PRIME_RISK"] = [
         row["ordinal"] for row in semantic["prime_semantic_candidates"]
     ]
@@ -453,7 +471,7 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
             "acceptance authority; do not run a whole-document geometry scan by "
             "default merely to make diagnostic metrics reach zero."
         )
-        report["next_actions"] = [
+        report["next_actions"].extend([
             "Run strict_final_compare.py once, inspect every source-vs-final page, "
             "then finalize_visual_review.py.",
             (
@@ -461,7 +479,7 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
                 "cannot be classified locally, re-run diagnose_after_conversion.py "
                 "with --deep-geometry for the expensive all-formula diagnostic pass."
             ),
-        ]
+        ])
         return report
 
     # Explicit deep mode: preserve the existing comprehensive geometry route.

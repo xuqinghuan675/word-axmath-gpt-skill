@@ -27,6 +27,7 @@ jobs:
           python scripts/test_display_alignment.py
           python scripts/test_crop_performance.py
           python scripts/test_conversion_resilience.py
+          python scripts/test_slim_pipeline.py
       - name: Parse PowerShell scripts
         shell: pwsh
         run: |

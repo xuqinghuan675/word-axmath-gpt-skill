@@ -15,7 +15,7 @@ from pathlib import Path
 import psutil
 
 from audit_docx import analyze, compare as compare_docx
-from normalize_numbering_punctuation import normalize_docx
+from normalize_numbering_punctuation import normalize_docx, numbering_dunhao_positions
 
 
 SKILL_PATH = Path(__file__).resolve().parents[1] / "SKILL.md"
@@ -175,7 +175,7 @@ def run_conversion(source: Path, doc_dir: Path, *, resume: bool = False, numberi
     logs_dir = doc_dir / "logs"
     source_dir.mkdir(parents=True, exist_ok=True)
     working_dir.mkdir(parents=True, exist_ok=True)
-    logs_dir.mkdir(parents=True, exist_ok=True)
+    # Logs directory is created only if an actual conversion failure occurs.
 
     frozen_source = source_dir / source.name
     if resume:
@@ -195,66 +195,100 @@ def run_conversion(source: Path, doc_dir: Path, *, resume: bool = False, numberi
     cmd = [
         sys.executable,
         str(SCRIPTS_DIR / "run_skill.py"),
-        "--input",
-        str(frozen_source),
-        "--output",
-        str(conversion_working),
+        "--input", str(frozen_source),
+        "--output", str(conversion_working),
+        "--quiet",
     ]
     if resume:
         cmd.append("--resume")
         normalized = working_dir / f"{source.stem}_AxMath-working_numbering-normalized.docx"
         if normalized.exists():
-            raise FileExistsError(f"Resume cannot overwrite an existing normalized working copy: {normalized}")
+            raise FileExistsError(
+                f"Resume cannot overwrite an existing normalized working copy: {normalized}"
+            )
     started = time.time()
     proc = subprocess.run(
-        cmd,
-        cwd=str(SCRIPTS_DIR),
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
+        cmd, cwd=str(SCRIPTS_DIR), text=True, encoding="utf-8",
+        errors="replace", capture_output=True,
     )
-    write_json(
-        log_path,
-        {
+    # On success run_skill.py already persisted the full performance/audit
+    # report. Only create a separate wrapper log on failure.
+    if proc.returncode:
+        write_json(log_path, {
             "returncode": proc.returncode,
             "seconds": time.time() - started,
             "stdout_tail": proc.stdout[-12000:],
             "stderr_tail": proc.stderr[-12000:],
-        },
-    )
+        })
 
-    source_stats = analyze(frozen_source)
-    source_sha_after = sha256_file(source)
-    source_unchanged = source_sha_after == source_sha_before
-    normalization = None
-    working = conversion_working
-    if proc.returncode == 0 and conversion_working.exists():
-        working = working_dir / f"{source.stem}_AxMath-working_numbering-normalized.docx"
-        normalization = normalize_docx(conversion_working, working, scope=numbering_scope)
-        write_json(logs_dir / "numbering-punctuation-normalization.json", normalization)
-
-    candidate_stats = analyze(working) if working.exists() else None
     skill_report_path = Path(str(conversion_working) + ".skill-report.json")
     skill_report = None
     if skill_report_path.exists():
         try:
-            skill_report = json.loads(
-                skill_report_path.read_text(encoding="utf-8-sig")
-            )
-        except Exception:
-            skill_report = None
-    audit = (
-        compare_docx(
-            frozen_source, working, numbering_scope=numbering_scope,
-            source_analysis=source_stats, candidate_analysis=candidate_stats,
+            skill_report = json.loads(skill_report_path.read_text(encoding="utf-8-sig"))
+        except (ValueError, OSError):
+            pass
+
+    # The child already performed the expensive full source/candidate XML
+    # comparison. Reuse that audit on the unchanged default path instead of
+    # decompressing the same large OLE-containing DOCX multiple times.
+    raw_audit = None
+    if (
+        proc.returncode == 0
+        and isinstance(skill_report, dict)
+        and skill_report.get("source_unchanged")
+        and skill_report.get("conversion_report_fresh")
+        and skill_report.get("returncode") == 0
+    ):
+        raw_audit = skill_report.get("audit")
+    source_stats = raw_audit["source"] if isinstance(raw_audit, dict) else analyze(frozen_source)
+
+    if numbering_scope == "line-start" and raw_audit:
+        expected_replacements = int(raw_audit.get("numbering_punctuation_expected_change_count") or 0)
+    else:
+        if "plain_contract" not in source_stats:
+            source_stats = analyze(frozen_source)
+        expected_replacements = sum(
+            len(numbering_dunhao_positions(text, scope=numbering_scope))
+            for text in source_stats["plain_contract"]
         )
-        if candidate_stats else None
-    )
+
+    source_sha_after = sha256_file(source)
+    source_unchanged = source_sha_after == source_sha_before
+    working = conversion_working
+    normalization = None
+    if proc.returncode == 0 and conversion_working.exists():
+        if expected_replacements:
+            working = working_dir / f"{source.stem}_AxMath-working_numbering-normalized.docx"
+            normalization = normalize_docx(conversion_working, working, scope=numbering_scope)
+        else:
+            normalization = {
+                "schema": "axmath-numbering-punctuation-normalization/v1",
+                "scope": numbering_scope,
+                "replacements": 0,
+                "skipped_no_matching_labels": True,
+                "input": str(conversion_working),
+                "output": str(conversion_working),
+            }
+
+    if raw_audit and working == conversion_working:
+        candidate_stats = raw_audit["candidate"]
+        audit = raw_audit
+    else:
+        candidate_stats = analyze(working) if working.exists() else None
+        if candidate_stats:
+            if "plain_contract" not in source_stats:
+                source_stats = analyze(frozen_source)
+            audit = compare_docx(
+                frozen_source, working, numbering_scope=numbering_scope,
+                source_analysis=source_stats, candidate_analysis=candidate_stats,
+            )
+        else:
+            audit = None
+
     performance = (
         (skill_report or {}).get("performance")
-        if isinstance(skill_report, dict)
-        else None
+        if isinstance(skill_report, dict) else None
     )
     count_state = (audit or {}).get("formula_count_state") or {}
     count_name = count_state.get("state")
@@ -315,7 +349,7 @@ def run_conversion(source: Path, doc_dir: Path, *, resume: bool = False, numberi
             audit and audit.get("nonmath_text_contract_exact")
         ),
         "performance": performance,
-        "conversion_log": str(log_path),
+        "conversion_log": str(log_path) if proc.returncode else None,
         "mandatory_next_step": (
             "Run diagnose_after_conversion.py on frozen_source + working_docx "
             "before any repair or page/layout tuning."
@@ -402,9 +436,6 @@ def main() -> int:
             resume=bool(args.resume_run), numbering_scope=args.numbering_scope,
         )
         results.append(result)
-        write_json(
-            run_dir / source.stem / "CONVERSION_RESULT.json", result
-        )
 
     failed = [
         x
@@ -449,7 +480,6 @@ def main() -> int:
         "ready_manifest": str(run_dir / "READY_FOR_GPT_REVIEW.json"),
         "documents": results,
     }
-    write_json(run_dir / "RUN_STATE.json", final)
     print(json.dumps(final, ensure_ascii=False, indent=2))
     return 0 if succeeded and not failed else 1
 
