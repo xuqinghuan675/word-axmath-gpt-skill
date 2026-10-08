@@ -8,6 +8,10 @@ import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from normalize_numbering_punctuation import (
+    normalize_numbering_text,
+    numbering_dunhao_positions,
+)
 from source_math_structure import analyze_source_structure, classify_count_state
 
 NS = {
@@ -26,11 +30,14 @@ def analyze(path: Path):
         root = ET.fromstring(z.read("word/document.xml"))
     paras = root.findall(".//w:p", NS)
     plain = []
+    plain_contract = []
     residual = []
     for pi, p in enumerate(paras, 1):
         chunks = []
+        contract_chunks = []
 
-        def walk(node, in_math=False, in_obj=False):
+        def walk_plain(node, in_math=False, in_obj=False):
+            # Preserve the pre-existing raw-text audit semantics exactly.
             if node.tag in (M + "oMath", M + "oMathPara"):
                 in_math = True
             if node.tag == W + "object":
@@ -38,10 +45,27 @@ def analyze(path: Path):
             if node.tag == W + "t" and not in_math and not in_obj:
                 chunks.append(node.text or "")
             for child in list(node):
-                walk(child, in_math, in_obj)
+                walk_plain(child, in_math, in_obj)
 
-        walk(p)
+        def walk_contract(node):
+            if node.tag in (M + "oMath", M + "oMathPara", W + "object", W + "drawing"):
+                # Match the normalizer's hard semantic boundary so a number
+                # before a formula/OLE/drawing cannot become a false list label.
+                contract_chunks.append("\ufffc")
+                return
+            if node.tag == W + "t":
+                contract_chunks.append(node.text or "")
+            elif node.tag in (W + "br", W + "cr"):
+                contract_chunks.append("\n")
+            elif node.tag == W + "tab":
+                contract_chunks.append("\t")
+            for child in list(node):
+                walk_contract(child)
+
+        walk_plain(p)
+        walk_contract(p)
         plain.append("".join(chunks))
+        plain_contract.append("".join(contract_chunks))
         for om in p.findall(".//m:oMath", NS):
             residual.append({
                 "p": pi,
@@ -64,6 +88,7 @@ def analyze(path: Path):
             n.startswith("word/embeddings/") and not n.endswith("/") for n in names
         ),
         "plain": plain,
+        "plain_contract": plain_contract,
         "residual": residual,
         "source_structure": structure,
     }
@@ -74,6 +99,17 @@ def compare(source: Path, candidate: Path):
     b = analyze(candidate)
     exact = a["plain"] == b["plain"]
     flat_exact = "".join(a["plain"]) == "".join(b["plain"])
+    normalized_source_contract = [
+        normalize_numbering_text(text) for text in a["plain_contract"]
+    ]
+    numbering_normalized_exact = normalized_source_contract == b["plain_contract"]
+    numbering_normalized_flat_exact = "".join(normalized_source_contract) == "".join(
+        b["plain_contract"]
+    )
+    numbering_expected_change_count = sum(
+        len(numbering_dunhao_positions(text)) for text in a["plain_contract"]
+    )
+    nonmath_text_contract_exact = exact or numbering_normalized_exact
     diffs = []
     if not exact:
         n = max(len(a["plain"]), len(b["plain"]))
@@ -89,11 +125,15 @@ def compare(source: Path, candidate: Path):
         a["source_structure"], b["axmath_ole"], b["omath"]
     )
     return {
-        "source": {k: v for k, v in a.items() if k != "plain"},
-        "candidate": {k: v for k, v in b.items() if k != "plain"},
+        "source": {k: v for k, v in a.items() if k not in {"plain", "plain_contract"}},
+        "candidate": {k: v for k, v in b.items() if k not in {"plain", "plain_contract"}},
         "paragraph_count_equal": a["paragraphs"] == b["paragraphs"],
         "nonmath_text_exact": exact,
         "nonmath_text_flat_exact": flat_exact,
+        "nonmath_text_numbering_normalized_exact": numbering_normalized_exact,
+        "nonmath_text_numbering_normalized_flat_exact": numbering_normalized_flat_exact,
+        "nonmath_text_contract_exact": nonmath_text_contract_exact,
+        "numbering_punctuation_expected_change_count": numbering_expected_change_count,
         "nonmath_text_diff_count": len(diffs),
         "nonmath_text_diffs": diffs[:60],
         "cjk_similarity": difflib.SequenceMatcher(

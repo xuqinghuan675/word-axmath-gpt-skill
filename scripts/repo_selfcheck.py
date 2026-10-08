@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from normalize_numbering_punctuation import normalize_numbering_text
 from source_math_structure import classify_count_state
 from source_tex_sanity import word_latex_is_sane
 
@@ -40,8 +41,10 @@ def main() -> int:
         "validate_local_visual_line_repair.py",
         "axmath_prime_contract.ps1",
         "normalize_axmath_tex.py",
+        "normalize_numbering_punctuation.py",
         "probe_axmath_prime_contract.ps1",
         "test_prime_normalization.py",
+        "test_numbering_punctuation.py",
         "export_source_visual_lines.ps1",
         "repair_multisibling_groups.ps1",
         "inspect_axmath_tex.ps1",
@@ -68,6 +71,7 @@ def main() -> int:
     map_builder = (SCRIPTS / "build_source_tex_map.py").read_text(encoding="utf-8")
     tex_sanity = (SCRIPTS / "source_tex_sanity.py").read_text(encoding="utf-8")
     prime_normalizer = (SCRIPTS / "normalize_axmath_tex.py").read_text(encoding="utf-8")
+    numbering_normalizer = (SCRIPTS / "normalize_numbering_punctuation.py").read_text(encoding="utf-8")
     prime_contract_ps = (SCRIPTS / "axmath_prime_contract.ps1").read_text(encoding="utf-8")
     prime_probe = (SCRIPTS / "probe_axmath_prime_contract.ps1").read_text(encoding="utf-8")
     prime_test = SCRIPTS / "test_prime_normalization.py"
@@ -131,6 +135,9 @@ def main() -> int:
             "diagnose_after_conversion.py",
             "known_multisibling_collapse",
             "source_unchanged",
+            "normalize_docx",
+            "numbering_punctuation_normalization",
+            "nonmath_text_contract_exact",
         ],
         "one_click_convert.py",
         errors,
@@ -157,10 +164,36 @@ def main() -> int:
             "formula_count_state",
             "known_multisibling_merge_signature",
             "unexpected_formula_count_gap",
+            "nonmath_text_numbering_normalized_exact",
+            "nonmath_text_contract_exact",
         ],
         "audit_docx.py",
         errors,
     )
+    require(
+        numbering_normalizer,
+        [
+            "numbering_dunhao_positions",
+            "normalize_numbering_text",
+            "normalize_docx",
+            "Refusing in-place numbering punctuation normalization.",
+            "paragraph-or-line-start Arabic-number label",
+        ],
+        "normalize_numbering_punctuation.py",
+        errors,
+    )
+    for source, expected in [
+        ("1、定义", "1.定义"),
+        ("（1）、定义", "（1）.定义"),
+        ("(2)、定义", "(2).定义"),
+        ("第1、2项", "第1、2项"),
+        ("甲、乙", "甲、乙"),
+    ]:
+        actual = normalize_numbering_text(source)
+        if actual != expected:
+            errors.append(
+                f"numbering punctuation normalization regression: {source!r} -> {actual!r}"
+            )
     require(
         m1_repair,
         [

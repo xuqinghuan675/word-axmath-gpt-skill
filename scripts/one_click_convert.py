@@ -14,7 +14,8 @@ from pathlib import Path
 
 import psutil
 
-from audit_docx import analyze
+from audit_docx import analyze, compare as compare_docx
+from normalize_numbering_punctuation import normalize_docx
 
 
 SKILL_PATH = Path(__file__).resolve().parents[1] / "SKILL.md"
@@ -181,7 +182,7 @@ def run_conversion(source: Path, doc_dir: Path) -> dict:
     frozen_source_sha256 = sha256_file(frozen_source)
     if frozen_source_sha256 != source_sha_before:
         raise RuntimeError("Frozen source copy hash mismatch; refusing conversion.")
-    working = working_dir / f"{source.stem}_AxMath-working.docx"
+    conversion_working = working_dir / f"{source.stem}_AxMath-working.docx"
     log_path = logs_dir / "conversion.log.json"
 
     cmd = [
@@ -190,7 +191,7 @@ def run_conversion(source: Path, doc_dir: Path) -> dict:
         "--input",
         str(frozen_source),
         "--output",
-        str(working),
+        str(conversion_working),
     ]
     started = time.time()
     proc = subprocess.run(
@@ -214,8 +215,15 @@ def run_conversion(source: Path, doc_dir: Path) -> dict:
     source_stats = analyze(frozen_source)
     source_sha_after = sha256_file(source)
     source_unchanged = source_sha_after == source_sha_before
+    normalization = None
+    working = conversion_working
+    if proc.returncode == 0 and conversion_working.exists():
+        working = working_dir / f"{source.stem}_AxMath-working_numbering-normalized.docx"
+        normalization = normalize_docx(conversion_working, working)
+        write_json(logs_dir / "numbering-punctuation-normalization.json", normalization)
+
     candidate_stats = analyze(working) if working.exists() else None
-    skill_report_path = Path(str(working) + ".skill-report.json")
+    skill_report_path = Path(str(conversion_working) + ".skill-report.json")
     skill_report = None
     if skill_report_path.exists():
         try:
@@ -224,11 +232,7 @@ def run_conversion(source: Path, doc_dir: Path) -> dict:
             )
         except Exception:
             skill_report = None
-    audit = (
-        (skill_report or {}).get("audit")
-        if isinstance(skill_report, dict)
-        else None
-    )
+    audit = compare_docx(frozen_source, working) if working.exists() else None
     performance = (
         (skill_report or {}).get("performance")
         if isinstance(skill_report, dict)
@@ -249,7 +253,7 @@ def run_conversion(source: Path, doc_dir: Path) -> dict:
         and count_acceptable
         and audit
         and audit.get("paragraph_count_equal")
-        and audit.get("nonmath_text_exact")
+        and audit.get("nonmath_text_contract_exact")
         and source_unchanged
     )
     return {
@@ -269,7 +273,11 @@ def run_conversion(source: Path, doc_dir: Path) -> dict:
         "source_unchanged": source_unchanged,
         "frozen_source": str(frozen_source),
         "frozen_source_sha256": frozen_source_sha256,
+        "conversion_working_docx": (
+            str(conversion_working) if conversion_working.exists() else None
+        ),
         "working_docx": str(working) if working.exists() else None,
+        "numbering_punctuation_normalization": normalization,
         "source_omath": source_stats["omath"],
         "working_omath": (
             candidate_stats["omath"] if candidate_stats else None
@@ -282,6 +290,9 @@ def run_conversion(source: Path, doc_dir: Path) -> dict:
         ),
         "nonmath_text_exact": bool(
             audit and audit.get("nonmath_text_exact")
+        ),
+        "nonmath_text_contract_exact": bool(
+            audit and audit.get("nonmath_text_contract_exact")
         ),
         "performance": performance,
         "conversion_log": str(log_path),

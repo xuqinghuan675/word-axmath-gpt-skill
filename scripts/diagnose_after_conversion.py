@@ -240,6 +240,10 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
         "formula_count_state": count,
         "paragraph_count_equal": bool(content.get("paragraph_count_equal")),
         "nonmath_text_exact": bool(content.get("nonmath_text_exact")),
+        "nonmath_text_contract_exact": bool(content.get("nonmath_text_contract_exact")),
+        "numbering_punctuation_expected_change_count": int(
+            content.get("numbering_punctuation_expected_change_count") or 0
+        ),
         "status": "starting",
         "repair_class": None,
         "next_actions": [],
@@ -251,7 +255,7 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
         ],
     }
 
-    if not content.get("paragraph_count_equal") or not content.get("nonmath_text_exact"):
+    if not content.get("paragraph_count_equal") or not content.get("nonmath_text_contract_exact"):
         report["status"] = "blocked_content_drift"
         report["repair_class"] = "STOP_CONTENT_DRIFT"
         return report

@@ -181,6 +181,15 @@ def compare(
         "paragraph_count_equal": bool(content_audit.get("paragraph_count_equal")),
         "nonmath_text_exact": bool(content_audit.get("nonmath_text_exact")),
         "nonmath_text_flat_exact": bool(content_audit.get("nonmath_text_flat_exact")),
+        "nonmath_text_numbering_normalized_exact": bool(
+            content_audit.get("nonmath_text_numbering_normalized_exact")
+        ),
+        "nonmath_text_numbering_normalized_flat_exact": bool(
+            content_audit.get("nonmath_text_numbering_normalized_flat_exact")
+        ),
+        "nonmath_text_contract_exact": bool(
+            content_audit.get("nonmath_text_contract_exact")
+        ),
         "repair_ledger": str(repair_ledger) if repair_ledger is not None else None,
         "repair_ledger_ok": repair_ledger_ok,
         "nonmath_text_diff_count": int(content_audit.get("nonmath_text_diff_count") or 0),
@@ -212,8 +221,14 @@ def compare(
         )
     )
     report["nonmath_text_contract_ok"] = bool(
-        report["nonmath_text_exact"]
-        or (repair_ledger_ok and report["nonmath_text_flat_exact"])
+        report["nonmath_text_contract_exact"]
+        or (
+            repair_ledger_ok
+            and (
+                report["nonmath_text_flat_exact"]
+                or report["nonmath_text_numbering_normalized_flat_exact"]
+            )
+        )
     )
     report["alignment_correspondence_mode"] = (
         "ordinal"

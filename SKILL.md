@@ -33,21 +33,30 @@ python scripts\one_click_convert.py --input "<source.docx>" --inspect-only
 python scripts\one_click_convert.py --input "<source.docx>"
 ```
 
-5. Open `READY_FOR_GPT_REVIEW.json`. Use its **frozen source** and **working DOCX**, not the live original.
-6. Before any repair, run:
+5. After a successful conversion, `one_click_convert.py` automatically writes a **new** numbering-punctuation-normalized working copy and makes that file the `working_docx` in the handoff manifest. This step only normalizes literal Arabic-number list/sub-item labels at paragraph/Word-line starts:
+   - `1、` → `1.`
+   - `12、` → `12.`
+   - `（1）、` → `（1）.`
+   - `(1)、` → `(1).`
+   - ASCII and fullwidth Arabic digits are accepted.
+   - Ordinary prose punctuation such as `第1、2项` or `甲、乙` is not globally replaced.
+   - The detector works across split Word text runs and treats OfficeMath/AxMath/OLE/drawing objects as hard boundaries.
+   - The original conversion working file remains untouched.
+6. Open `READY_FOR_GPT_REVIEW.json`. Use its **frozen source** and normalized **working DOCX**, not the live original or the pre-normalization conversion copy.
+7. Before any repair, run:
 
 ```powershell
 python scripts\diagnose_after_conversion.py --source "<frozen-source.docx>" --working "<working.docx>" --outdir "<review-dir>"
 ```
 
-7. Read `NEXT_ACTION.json` and follow its repair class. **Do not skip the current class and do not invent another repair route.**
+8. Read `NEXT_ACTION.json` and follow its repair class. **Do not skip the current class and do not invent another repair route.**
    - Default diagnosis is **fast static + targeted Word proof**, not an all-formula COM sweep.
    - It uses DOCX/XML for counts, M1 structure, AxMath VML shell size, and conservative over-wide candidates; only suspicious source ordinals are opened in Word to prove multi-line intent.
    - Use `--deep-geometry` only when final/source-vs-working visual evidence exposes an ambiguous defect that fast triage cannot classify.
-8. Every mutation writes a **new** working copy. After each grouped repair, run the diagnosis again.
-9. Only when diagnosis says `ready_for_strict_final_compare`, run the full strict final gate once.
+9. Every mutation writes a **new** working copy. After each grouped repair, run the diagnosis again.
+10. Only when diagnosis says `ready_for_strict_final_compare`, run the full strict final gate once.
 
-If a new chat has not performed steps 1 and 6, it is not authorized to improvise a repair.
+If a new chat has not performed steps 1 and 7, it is not authorized to improvise a repair.
 
 ## 2. Preflight contract
 
@@ -319,6 +328,7 @@ Geometry profile keeps COM formula inventory and SHA checks but skips full PDF/p
 ### Named production tools
 
 - static OMML structure → `source_math_structure.py`;
+- Arabic-number label punctuation normalization → `normalize_numbering_punctuation.py`;
 - content/count check → `audit_docx.py`;
 - mandatory dispatcher → `diagnose_after_conversion.py`;
 - source/working geometry → `snapshot_docx.py --profile geometry`;
@@ -395,7 +405,7 @@ Visual layout is the final acceptance authority. Geometry/centering/same-line di
 - no visually observable M2 right-overflow/wrap-loss remains;
 - no semantic/internal mismatch remains;
 - preview-only defects are isolated from semantic defects;
-- paragraph count and non-math text are exact;
+- paragraph count is exact, and non-math text is either byte-for-byte equivalent at the paragraph-text level or differs only by the approved Arabic-number label `、 → .` normalization contract;
 - unrelated text/style structure is preserved;
 - centered formulas remain visually centered;
 - fresh source/final render exists;

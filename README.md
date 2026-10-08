@@ -38,6 +38,15 @@ python scripts\one_click_convert.py --input "<源.docx>"
 
 源文件不会被覆盖。工作区会保存 frozen source、working copy、转换报告和恢复边界。
 
+转换成功后，`one_click_convert.py` 还会自动生成一个新的编号标点规范化 working copy，并把它作为 `READY_FOR_GPT_REVIEW.json` 里的正式 `working_docx`：
+
+- `1、` → `1.`
+- `12、` → `12.`
+- `（1）、` → `（1）.`
+- `(1)、` → `(1).`
+
+只处理段落开头或 Word 换行后的阿拉伯数字编号，支持跨多个 Word text run；不会把正文里的普通顿号全局替换，例如 `第1、2项`、`甲、乙` 保持不变。AxMath / OfficeMath / OLE 对象被当作硬边界，不参与文本替换。原始转换 working copy 仍保留。
+
 ### 4. 强制诊断入口
 
 读取 `READY_FOR_GPT_REVIEW.json` 中的 frozen source / working 路径，然后：
@@ -132,6 +141,7 @@ Word LaTeX 导出也不能因为“非空”就相信。实测出现过 control 
 
 | 任务 | 工具 |
 |---|---|
+| 阿拉伯数字编号顿号规范化 | `normalize_numbering_punctuation.py` |
 | Source OMML 结构 / M1 signature | `source_math_structure.py` |
 | 内容、段落、公式计数 | `audit_docx.py` |
 | 强制 repair dispatcher | `diagnose_after_conversion.py` |
