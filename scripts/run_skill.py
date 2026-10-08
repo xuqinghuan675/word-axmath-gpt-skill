@@ -12,6 +12,7 @@ from pathlib import Path
 import psutil
 
 from audit_docx import compare
+from execution_lock import conversion_lock
 
 
 def _sha256_file(path: Path) -> str:
@@ -106,13 +107,7 @@ def _performance_summary(conversion: dict | None) -> dict | None:
     }
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--input", required=True)
-    ap.add_argument("--output", required=True)
-    ap.add_argument("--overwrite-output", action="store_true")
-    args = ap.parse_args()
-
+def _execute(args):
     src = Path(args.input).resolve()
     out = Path(args.output).resolve()
     if not src.is_file():
@@ -120,16 +115,36 @@ def main():
     if src == out:
         raise RuntimeError("Refusing to overwrite the input DOCX.")
     if out.exists() and not args.overwrite_output:
-        raise FileExistsError(f"Output already exists: {out}")
+        if not args.resume:
+            raise FileExistsError(f"Output already exists: {out}")
+    if args.resume and args.overwrite_output:
+        raise ValueError("Resume and overwrite cannot be combined.")
+    if args.resume:
+        checkpoint = Path(str(out) + ".conversion-checkpoint.json")
+        if not out.is_file() or not checkpoint.is_file():
+            raise FileNotFoundError("Resume requires existing working DOCX and saved checkpoint.")
+        state = json.loads(checkpoint.read_text(encoding="utf-8-sig"))
+        if (
+            state.get("schema") != "axmath-conversion-checkpoint/v1"
+            or state.get("source_sha256") != _sha256_file(src)
+            or state.get("working_sha256") != _sha256_file(out)
+            or Path(state.get("source_path") or "").resolve() != src
+            or Path(state.get("working_path") or "").resolve() != out
+        ):
+            raise ValueError("Resume checkpoint does not match frozen source and saved working DOCX.")
     out.parent.mkdir(parents=True, exist_ok=True)
     source_sha_before = _sha256_file(src)
     here = Path(__file__).resolve().parent
     conv = here / "convert_officemath_to_axmath.ps1"
     watcher_script = here / "axmath_batch_dialog_watcher.py"
     conv_report = Path(str(out) + ".conversion.json")
+    previous_conv_report_time_ns = (
+        conv_report.stat().st_mtime_ns if conv_report.exists() else None
+    )
     final_report = Path(str(out) + ".skill-report.json")
     watcher_log = Path(str(out) + ".dialog-watcher.log")
     control = Path(str(out) + ".control.json")
+    watchdog_report = Path(str(out) + f".watchdog-{time.time_ns()}.json")
     t0 = time.perf_counter()
 
     preexisting_word = _word_pids()
@@ -148,6 +163,8 @@ def main():
     ]
     if args.overwrite_output:
         cmd.append("-OverwriteOutput")
+    if args.resume:
+        cmd.append("-ResumeOutput")
     p = subprocess.Popen(
         cmd,
         text=True,
@@ -162,6 +179,8 @@ def main():
             "--main-pid", str(p.pid),
             "--log", str(watcher_log),
             "--control", str(control),
+            "--stall-seconds", str(args.watchdog_seconds),
+            "--timeout-report", str(watchdog_report),
         ],
         text=True,
         encoding="utf-8",
@@ -170,6 +189,23 @@ def main():
         stderr=subprocess.PIPE,
     )
 
+    # Do not wait forever in communicate() after the dialog watchdog has
+    # already failed. Only the Popen we created here may be terminated;
+    # pre-existing Word sessions are never touched.
+    watcher_lost_while_running = False
+    while p.poll() is None:
+        if watcher.poll() is not None:
+            time.sleep(0.5)  # avoid a false race during normal shutdown
+            if p.poll() is None:
+                watcher_lost_while_running = True
+                p.terminate()
+                try:
+                    p.wait(timeout=8)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+                    p.wait(timeout=8)
+            break
+        time.sleep(0.35)
     stdout, stderr = p.communicate()
     try:
         watcher_stdout, watcher_stderr = watcher.communicate(timeout=8)
@@ -184,7 +220,14 @@ def main():
     source_sha_after = _sha256_file(src)
     source_unchanged = source_sha_after == source_sha_before
     conversion = None
-    if conv_report.exists():
+    report_fresh = bool(
+        conv_report.exists()
+        and (
+            previous_conv_report_time_ns is None
+            or conv_report.stat().st_mtime_ns != previous_conv_report_time_ns
+        )
+    )
+    if report_fresh:
         conversion = json.loads(conv_report.read_text(encoding="utf-8-sig"))
     audit = compare(src, out) if out.exists() else None
 
@@ -207,6 +250,7 @@ def main():
         "runner_seconds": time.perf_counter() - t0,
         "returncode": p.returncode,
         "conversion": conversion,
+        "conversion_report_fresh": report_fresh,
         "performance": _performance_summary(conversion),
         "audit": audit,
         "source_sha256_before": source_sha_before,
@@ -219,14 +263,23 @@ def main():
         "watcher_log": str(watcher_log),
         "watcher_stdout_tail": watcher_stdout[-4000:],
         "watcher_stderr_tail": watcher_stderr[-4000:],
+        "watcher_returncode": watcher.returncode,
+        "watcher_lost_while_converter_running": watcher_lost_while_running,
+        "watchdog_report": str(watchdog_report) if watchdog_report.exists() else None,
+        "resume_requested": bool(args.resume),
     }
     final_report.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(report, ensure_ascii=True, indent=2))
 
     ok = bool(
-        conversion
+        p.returncode == 0
+        and report_fresh
+        and conversion
         and conversion.get("success")
         and conversion.get("complete")
+        and watcher.returncode == 0
+        and not watcher_lost_while_running
+        and not watchdog_report.exists()
         and not lingering_word
         and audit
         and audit.get("paragraph_count_equal")
@@ -234,6 +287,20 @@ def main():
         and source_unchanged
     )
     return 0 if ok else 1
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--input", required=True)
+    ap.add_argument("--output", required=True)
+    ap.add_argument("--overwrite-output", action="store_true")
+    ap.add_argument("--resume", action="store_true", help="Continue a SHA-bound saved conversion checkpoint")
+    ap.add_argument("--watchdog-seconds", type=int, default=1800)
+    args = ap.parse_args()
+    if args.watchdog_seconds < 60:
+        ap.error("--watchdog-seconds must be >= 60")
+    with conversion_lock():
+        return _execute(args)
 
 
 if __name__ == "__main__":

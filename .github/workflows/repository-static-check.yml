@@ -13,10 +13,20 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install regression dependencies
+        run: python -m pip install -r requirements.txt
       - name: Python and repository contract checks
         run: python scripts/repo_selfcheck.py
       - name: Prime normalization regression checks
         run: python scripts/test_prime_normalization.py
+      - name: Word XML and render-pipeline regressions (no Office required)
+        run: |
+          python -m compileall -q scripts
+          python scripts/test_numbering_punctuation.py
+          python scripts/test_page_style_and_semantics.py
+          python scripts/test_display_alignment.py
+          python scripts/test_crop_performance.py
+          python scripts/test_conversion_resilience.py
       - name: Parse PowerShell scripts
         shell: pwsh
         run: |

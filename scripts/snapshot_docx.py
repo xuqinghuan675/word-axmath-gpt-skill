@@ -710,40 +710,44 @@ def _render_pdf(pdf: Path, pages_dir: Path, zoom: float = 2.0):
 def _crop_formula_pages(inventory, pages, crop_dir: Path):
     crop_dir.mkdir(parents=True, exist_ok=True)
     page_map = {p["page"]: p for p in pages}
+    by_page = {}
     for kind, rows in inventory.items():
         for rec in rows:
             pg = int(rec.get("page") or 0)
-            meta = page_map.get(pg)
-            if not meta:
-                continue
             x, y = rec.get("x_pt"), rec.get("y_pt")
-            if x is None or y is None or x < 0 or y < 0:
+            if pg not in page_map or x is None or y is None or x < 0 or y < 0:
                 continue
-            page_img = Image.open(meta["path"]).convert("RGB")
+            by_page.setdefault(pg, []).append((kind, rec, x, y))
+
+    # A 4,000-formula book can contain dozens of formulas on the same page.
+    # Decode that page only once and crop every formula before closing it.
+    for pg, entries in sorted(by_page.items()):
+        meta = page_map[pg]
+        with Image.open(meta["path"]) as original:
+            page_img = original.convert("RGB")
             sx = meta["width_px"] / meta["width_pt"]
             sy = meta["height_px"] / meta["height_pt"]
-            if kind == "axmath":
-                w = max(60.0, float(rec.get("width_pt") or 120.0))
-                h = max(18.0, float(rec.get("height_pt") or 18.0))
-            else:
-                # Native OfficeMath crops follow Word's measured source range
-                # width when it stayed on one line; fall back only when Word
-                # cannot provide a reliable range geometry.
-                w = max(40.0, float(rec.get("visual_width_pt") or 220.0))
-                h = max(22.0, float(rec.get("font_size_pt") or 12.0) * 2.2)
-            box = (
-                max(0, int((x - 45) * sx)),
-                max(0, int((y - 22) * sy)),
-                min(page_img.width, int((x + w + 80) * sx)),
-                min(page_img.height, int((y + h + 30) * sy)),
-            )
-            if box[2] <= box[0] or box[3] <= box[1]:
-                continue
-            crop = page_img.crop(box)
-            out = crop_dir / f"{rec['formula_id']}.png"
-            crop.save(out)
-            rec["crop_png"] = str(out)
-            rec["crop_box_px"] = list(box)
+            for kind, rec, x, y in entries:
+                if kind == "axmath":
+                    w = max(60.0, float(rec.get("width_pt") or 120.0))
+                    h = max(18.0, float(rec.get("height_pt") or 18.0))
+                else:
+                    # Native OfficeMath crops use measured source geometry.
+                    w = max(40.0, float(rec.get("visual_width_pt") or 220.0))
+                    h = max(22.0, float(rec.get("font_size_pt") or 12.0) * 2.2)
+                box = (
+                    max(0, int((x - 45) * sx)),
+                    max(0, int((y - 22) * sy)),
+                    min(page_img.width, int((x + w + 80) * sx)),
+                    min(page_img.height, int((y + h + 30) * sy)),
+                )
+                if box[2] <= box[0] or box[3] <= box[1]:
+                    continue
+                crop = page_img.crop(box)
+                out = crop_dir / f"{rec['formula_id']}.png"
+                crop.save(out)
+                rec["crop_png"] = str(out)
+                rec["crop_box_px"] = list(box)
 
 
 def snapshot(docx: Path, outdir: Path, label: str | None = None, profile: str = "full"):

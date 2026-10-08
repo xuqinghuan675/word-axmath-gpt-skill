@@ -10,6 +10,8 @@ from pathlib import Path
 from audit_docx import compare
 from build_source_tex_map import build_multisibling_map, static_axmath_inventory
 from formula_geometry_audit import audit as geometry_audit
+from restore_word_page_layout import page_style_report
+from source_semantic_risks import scan_source_math
 from snapshot_docx import _range_visual_geometry, snapshot
 from word_runtime import OwnedWord
 
@@ -33,6 +35,52 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _prime_review_state(source: Path, working: Path, ordinals: list[int], path: Path | None, outdir: Path) -> dict:
+    source_sha, working_sha = _sha256_file(source), _sha256_file(working)
+    template_path = outdir / "PRIME_REVIEW_TEMPLATE.json"
+    if not ordinals:
+        return {"verified": True, "required": [], "review": None}
+    template = {
+        "schema": "axmath-prime-semantic-review/v1",
+        "source_sha256": source_sha,
+        "working_sha256": working_sha,
+        "rows": [
+            {"ordinal": o, "source_semantics_match": None,
+             "axmath_contract_verified": None, "evidence": ""}
+            for o in ordinals
+        ],
+    }
+    # Do not overwrite a completed review when the caller supplies the
+    # template itself as --prime-review. A reviewer may choose that path.
+    if path is None or path.resolve() != template_path.resolve():
+        _write(template_path, template)
+    elif not template_path.is_file():
+        _write(template_path, template)
+    if path is None:
+        return {"verified": False, "required": ordinals, "review_template": str(template_path)}
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
+    rows = data.get("rows") or []
+    verified = bool(
+        data.get("schema") == "axmath-prime-semantic-review/v1"
+        and data.get("source_sha256") == source_sha
+        and data.get("working_sha256") == working_sha
+        and len(rows) == len(ordinals)
+        and sorted(int(x.get("ordinal") or 0) for x in rows) == sorted(ordinals)
+        and all(
+            x.get("source_semantics_match") is True
+            and x.get("axmath_contract_verified") is True
+            and str(x.get("evidence") or "").strip()
+            for x in rows
+        )
+    )
+    return {
+        "verified": verified,
+        "required": ordinals,
+        "review": str(path),
+        "review_template": str(template_path),
+    }
 
 
 def _source_multiline_probe(source: Path, ordinals: list[int]) -> dict:
@@ -221,13 +269,13 @@ def _append_m2_actions(report: dict, source: Path, working: Path, outdir: Path, 
     ])
 
 
-def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool = False) -> dict:
+def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool = False, numbering_scope: str = "line-start", prime_review: Path | None = None) -> dict:
     source = source.resolve()
     working = working.resolve()
     outdir = outdir.resolve()
     outdir.mkdir(parents=True, exist_ok=True)
 
-    content = compare(source, working)
+    content = compare(source, working, numbering_scope=numbering_scope)
     _write(outdir / "CONTENT_AUDIT.json", content)
     count = content.get("formula_count_state") or {}
     state = count.get("state")
@@ -237,6 +285,7 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
         "source": str(source),
         "working": str(working),
         "diagnosis_profile": "deep_geometry" if deep_geometry else "fast_static_targeted",
+        "numbering_scope": numbering_scope,
         "formula_count_state": count,
         "paragraph_count_equal": bool(content.get("paragraph_count_equal")),
         "nonmath_text_exact": bool(content.get("nonmath_text_exact")),
@@ -250,7 +299,7 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
         "do_not": [
             "Do not tune page count directly.",
             "Do not run global width/height/w:position sweeps.",
-            "Do not split one source auto-wrapped formula into multiple AxMath objects.",
+            "Do not split a source formula without validated frozen-source visual rows and an M2-B ledger.",
             "Do not use AxMath->TeX roundtrip as the semantic source for derivative/prime formulas.",
         ],
     }
@@ -311,6 +360,21 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
         ],
     }
     report["queues"] = fast_queues
+    # Static OMML scan costs no Word COM calls, even for thousands of formulas.
+    semantic = scan_source_math(source)
+    _write(outdir / "SOURCE_SEMANTIC_RISKS.json", semantic)
+    report["semantic_risks"] = str(outdir / "SOURCE_SEMANTIC_RISKS.json")
+    fast_queues["CLASS_E_PRIME_RISK"] = [
+        row["ordinal"] for row in semantic["prime_semantic_candidates"]
+    ]
+    fast_queues["SET_SYMBOL_VISUAL_REVIEW"] = [
+        row["ordinal"] for row in semantic["set_symbol_visual_candidates"]
+    ]
+    fast_queues["STANDALONE_DISPLAY_ALIGNMENT_VISUAL"] = [
+        row["ordinal"] for row in semantic["standalone_display_alignment_visual_candidates"]
+    ]
+    page_style = page_style_report(source, working)
+    report["page_style"] = page_style
 
     if fast_queues["CLASS_E_SEMANTIC_REBUILD"]:
         report["status"] = "repair_review_required"
@@ -337,6 +401,43 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
             "multiline intent was not proven. Inspect those pages/formulas; do not "
             "auto-shrink or split them. Use --deep-geometry only if the visual "
             "defect cannot be classified from source-vs-working evidence."
+        )
+
+    prime_state = _prime_review_state(
+        source, working, fast_queues["CLASS_E_PRIME_RISK"], prime_review, outdir
+    )
+    report["prime_review"] = prime_state
+    if fast_queues["CLASS_E_PRIME_RISK"] and not prime_state["verified"]:
+        report["status"] = "repair_review_required"
+        report["repair_class"] = report["repair_class"] or "CLASS_E_PRIME_RISK"
+        report["next_actions"].append(
+            "Review source prime/derivative candidates against the verified AxMath "
+            "2.7 prime contract. Rebuild only confirmed mismatches from frozen OMML, "
+            "never from a potentially damaged AxMath roundtrip. "
+            f'Only after proof fill "{prime_state["review_template"]}" and '
+            "pass it back using --prime-review."
+        )
+    if fast_queues["SET_SYMBOL_VISUAL_REVIEW"]:
+        report["next_actions"].append(
+            "During final page inspection, prioritize collection symbol ordinals "
+            "(union/intersection/subset). Source tokens alone do not prove a defect."
+        )
+    if fast_queues["STANDALONE_DISPLAY_ALIGNMENT_VISUAL"]:
+        report["next_actions"].append(
+            "During strict final page-by-page review, check standalone OMML "
+            "ordinals for accidental centering-to-left shifts. COM x_pt may "
+            "remain unchanged; actual Word/PDF visuals decide. If confirmed, "
+            "run repair_standalone_display_alignment.py with explicit "
+            "reviewed ordinals, bound source+working hashes and NEW output."
+        )
+    if not page_style["equal"]:
+        report["status"] = "repair_review_required"
+        report["repair_class"] = report["repair_class"] or "PAGE_STYLE_RESTORE"
+        restored = outdir / (working.stem + "_page-style-fixed.docx")
+        report["next_actions"].append(
+            "Restore only the source page background and borders after math repair: "
+            f'python scripts/restore_word_page_layout.py --reference "{source}" '
+            f'--target "{working}" --output "{restored}"; then re-diagnose.'
         )
 
     # Fast high-confidence defects are handled before any expensive all-formula
@@ -434,12 +535,16 @@ def main() -> int:
         action="store_true",
         help="Run the expensive all-formula Word COM geometry audit. Default is fast static+targeted triage.",
     )
+    ap.add_argument("--numbering-scope", choices=("line-start", "anywhere"), default="line-start")
+    ap.add_argument("--prime-review", help="Hash-bound verified AxMath prime semantic review manifest")
     args = ap.parse_args()
     report = diagnose(
         Path(args.source),
         Path(args.working),
         Path(args.outdir),
         deep_geometry=args.deep_geometry,
+        numbering_scope=args.numbering_scope,
+        prime_review=Path(args.prime_review) if args.prime_review else None,
     )
     out = Path(args.outdir).resolve() / "NEXT_ACTION.json"
     _write(out, report)

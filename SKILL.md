@@ -416,7 +416,7 @@ Visual layout is the final acceptance authority. Geometry/centering/same-line di
 Ambiguous cases are `needs_human_review`. Never guess, and never turn the formal document into a parameter-search sandbox.
 
 
-## 10. Word 页面级视觉属性恢复（新增）
+## 12. Word 页面级视觉属性恢复
 
 重新生成 DOCX 或 AxMath 转换链不得默认丢弃原稿页面级视觉属性。
 
@@ -445,3 +445,100 @@ python scripts\restore_word_page_layout.py --reference "<source.docx>" --target 
 - `w:pgBorders`
 
 完成后仍需运行最终视觉检查。
+
+
+## 13. 2026-10-08 conversion/resume and speed hardening
+
+The AxMath plugin still owns its per-macro batch size (roughly 64–66 formulas on
+2.7.0.58). **The Skill no longer caps total macro invocations at 64**. A new
+invocation continues while OfficeMath remains, but each call must strictly
+reduce the number of OfficeMath objects; unchanged or increased counts stop
+the task. Never patch AxMath internals or bypass WaitingConvert.
+
+Every completed batch saves the working DOCX and then atomically records
+`<working.docx>.conversion-checkpoint.json`, including the SHA-256 of both
+frozen source and saved working DOCX, remaining OfficeMath count, and last
+batch ordinal. Before resuming, both hashes, paths and residual count must
+match. A mismatching checkpoint must **fail closed**; never automatically
+ignore it or overwrite saved progress.
+
+Resume a previous incomplete, single-document run (use the original input
+path and the existing run directory):
+
+```powershell
+python scripts\one_click_convert.py --input "<original-source.docx>" --resume-run "<existing-run-YYYYMMDD-HHMMSS>" --numbering-scope line-start
+```
+
+Or continue only the saved conversion working copy:
+
+```powershell
+python scripts\run_skill.py --input "<frozen-source.docx>" --output "<partial-working.docx>" --resume
+```
+
+`run_skill.py` serializes this Skill's conversions with an exclusive
+per-user mutex, because AxMath shares HKCU completion state. Its dialog
+watcher closes **only confirmed** completed AxMath dialogs. The default
+30-minute per-macro/save-phase watchdog checks both owned WINWORD PID and
+process creation time before terminating a stalled **task-owned** process,
+never a pre-existing user Word. For unusual environments it can be changed
+via `--watchdog-seconds` (minimum 60). The watcher never treats a timeout
+or a missing PID proof as successful conversion.
+
+### Fast diagnosis and semantic checks
+
+`diagnose_after_conversion.py` uses lightweight static OMML inspection for
+prime/derivative and collection-operator risks. Prime-containing source
+formulas are not silently declared good because width/page geometry matches.
+The diagnostic writes `SOURCE_SEMANTIC_RISKS.json` and
+`PRIME_REVIEW_TEMPLATE.json`. When prime risks exist, evidence must come
+from actual source-to-AxMath semantic verification; an unverified template
+cannot be marked passed. Give the hash-bound approved review via:
+
+```powershell
+python scripts\diagnose_after_conversion.py --source "<frozen.docx>" --working "<working.docx>" --outdir "<review>" --prime-review "<verified-prime-review.json>"
+```
+
+Set-operator candidates are **visual review priorities, not permission to
+guess replacement glyphs**. Geometry anomalies alone do not justify formula
+rewriting. Any page background or border mismatch is diagnosed as a separate
+page-style repair, and the final strict acceptance gate now rejects such
+mismatches even if the formula count and non-math text match.
+
+### Optional punctuation scope
+
+The safe default remains `--numbering-scope line-start`. If explicitly
+requested, `--numbering-scope anywhere` changes every literal Arabic digit
+or parenthesized Arabic-number label immediately followed by `、`, even
+mid-paragraph; this intentionally also changes `第1、2项` to `第1.2项`.
+It is **not suitable for normal book proofreading by default**. Use the
+same explicit numbering scope in `one_click_convert.py`,
+`diagnose_after_conversion.py`, and `strict_final_compare.py`.
+
+### Performance rules and validation
+
+- `snapshot_docx.py` opens and decodes each rendered page once when
+  cropping all formula images on that page; it never reopens the page
+  for every formula.
+- Final page-by-page source/final visual review stays mandatory. Do not
+  cache a previous Word render as "fresh final evidence" merely because
+  the DOCX hash matches; Word layout can depend on fonts/printer/runtime.
+- `restore_word_page_layout.py` writes a new output only, inserts
+  `w:pgBorders` in schema order, verifies the ZIP/page style and preserves
+  OLE/embedding bytes. It fails closed if section counts differ or a
+  page decoration references media relationships not copied.
+- Pure Python regression checks: `test_conversion_resilience.py`,
+  `test_page_style_and_semantics.py`, `test_crop_performance.py`,
+  `test_numbering_punctuation.py`, `test_prime_normalization.py`.
+  CI does not replace a real Word+AxMath smoke conversion.
+
+### 新增：独立显示公式居中偏移修复（必须视觉证实）
+
+在十三月实机合成测试中，`m:oMath` 独占段落时，Word 的原生数学布局可能自动居中，但转换后的 `Equation.AxMath` 会按段落的左对齐位置显示；两者即使 Word COM `x_pt` 相同，PDF 实际像素也可能不同。现在静态检测会列出 `STANDALONE_DISPLAY_ALIGNMENT_VISUAL` 风险供逐页重点核查；**仅在源稿/完成稿视觉对比证实且明确指定公式序号后**，可执行最小修复：
+
+```powershell
+python scripts\repair_standalone_display_alignment.py --source "<冻结源稿>" --working "<待修复工作稿>" --output "<新完成稿.docx>" --ordinals "1,2" --expected-source-sha256 "<源SHA256>" --expected-working-sha256 "<工作稿SHA256>"
+```
+
+此修复只修改确认的公式段落 `w:pPr/w:jc=center`，不碰 AxMath/OLE 嵌入内容，也不强制给所有公式居中。修复后**必须重新逐页视觉验收**。十三月实机已验证 3 个合成独立公式从错误左对齐恢复与原稿一致，并通过 `acceptance_pass=true`。实机验证只覆盖小样本，不代表 4000 公式全书已跑完。
+
+另外，编号无替换时使用字节级复制，避免将包含数千个 OLE 的 DOCX 整体重新压缩；上层会复用已计算的 frozen source 和 working 静态分析结果，减少重复 ZIP/XML 读取。

@@ -8,6 +8,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 from audit_docx import compare as audit_docx_compare
+from restore_word_page_layout import page_style_report
 from snapshot_docx import snapshot
 
 
@@ -110,6 +111,7 @@ def compare(
     expected_source_sha256: str,
     center_tolerance_pt: float = 3.0,
     repair_ledger: Path | None = None,
+    numbering_scope: str = "line-start",
 ) -> dict:
     source_docx = source_docx.resolve()
     final_docx = final_docx.resolve()
@@ -128,7 +130,8 @@ def compare(
 
     source_snapshot = snapshot(source_docx, outdir / "source", "source")
     final_snapshot = snapshot(final_docx, outdir / "final", "final")
-    content_audit = audit_docx_compare(source_docx, final_docx)
+    content_audit = audit_docx_compare(source_docx, final_docx, numbering_scope=numbering_scope)
+    page_style = page_style_report(source_docx, final_docx)
 
     repair_ledger_report = None
     repair_ledger_ok = False
@@ -167,6 +170,8 @@ def compare(
         "final": str(final_docx),
         "source_sha256": source_sha_before,
         "final_sha256": final_sha_before,
+        "numbering_scope": numbering_scope,
+        "page_style": page_style,
         "expected_source_sha256": expected_source_sha256.strip().lower(),
         "source_baseline_ok": source_baseline_ok,
         "source_stable_during_compare": source_stable and bool(source_snapshot.get("docx_stable")),
@@ -307,6 +312,7 @@ def compare(
         and report["final_omath_count"] == 0
         and report["paragraph_contract_ok"]
         and report["nonmath_text_contract_ok"]
+        and report["page_style"]["equal"]
         and source_snapshot.get("status") == "ready"
         and final_snapshot.get("status") == "ready"
         and report["visual_evidence_complete"]
@@ -340,6 +346,7 @@ def main() -> int:
         "--repair-ledger",
         help="Validated axmath-local-layout-repair-ledger/v1 for intentional visual-line splits.",
     )
+    ap.add_argument("--numbering-scope", choices=("line-start", "anywhere"), default="line-start")
     args = ap.parse_args()
 
     report = compare(
@@ -349,6 +356,7 @@ def main() -> int:
         args.expected_source_sha256,
         args.center_tolerance_pt,
         Path(args.repair_ledger) if args.repair_ledger else None,
+        args.numbering_scope,
     )
     print(json.dumps({
         "hard_content_pass": report["hard_content_pass"],

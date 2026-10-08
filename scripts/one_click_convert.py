@@ -168,7 +168,7 @@ def write_json(path: Path, value: dict) -> None:
     )
 
 
-def run_conversion(source: Path, doc_dir: Path) -> dict:
+def run_conversion(source: Path, doc_dir: Path, *, resume: bool = False, numbering_scope: str = "line-start") -> dict:
     source_sha_before = sha256_file(source)
     source_dir = doc_dir / "source"
     working_dir = doc_dir / "working"
@@ -178,12 +178,19 @@ def run_conversion(source: Path, doc_dir: Path) -> dict:
     logs_dir.mkdir(parents=True, exist_ok=True)
 
     frozen_source = source_dir / source.name
-    shutil.copy2(source, frozen_source)
+    if resume:
+        if not frozen_source.is_file():
+            raise FileNotFoundError(f"Resume frozen source is missing: {frozen_source}")
+    else:
+        shutil.copy2(source, frozen_source)
     frozen_source_sha256 = sha256_file(frozen_source)
     if frozen_source_sha256 != source_sha_before:
         raise RuntimeError("Frozen source copy hash mismatch; refusing conversion.")
     conversion_working = working_dir / f"{source.stem}_AxMath-working.docx"
-    log_path = logs_dir / "conversion.log.json"
+    log_path = logs_dir / (
+        f"conversion.resume-{dt.datetime.now():%Y%m%d-%H%M%S}.log.json"
+        if resume else "conversion.log.json"
+    )
 
     cmd = [
         sys.executable,
@@ -193,6 +200,11 @@ def run_conversion(source: Path, doc_dir: Path) -> dict:
         "--output",
         str(conversion_working),
     ]
+    if resume:
+        cmd.append("--resume")
+        normalized = working_dir / f"{source.stem}_AxMath-working_numbering-normalized.docx"
+        if normalized.exists():
+            raise FileExistsError(f"Resume cannot overwrite an existing normalized working copy: {normalized}")
     started = time.time()
     proc = subprocess.run(
         cmd,
@@ -219,7 +231,7 @@ def run_conversion(source: Path, doc_dir: Path) -> dict:
     working = conversion_working
     if proc.returncode == 0 and conversion_working.exists():
         working = working_dir / f"{source.stem}_AxMath-working_numbering-normalized.docx"
-        normalization = normalize_docx(conversion_working, working)
+        normalization = normalize_docx(conversion_working, working, scope=numbering_scope)
         write_json(logs_dir / "numbering-punctuation-normalization.json", normalization)
 
     candidate_stats = analyze(working) if working.exists() else None
@@ -232,7 +244,13 @@ def run_conversion(source: Path, doc_dir: Path) -> dict:
             )
         except Exception:
             skill_report = None
-    audit = compare_docx(frozen_source, working) if working.exists() else None
+    audit = (
+        compare_docx(
+            frozen_source, working, numbering_scope=numbering_scope,
+            source_analysis=source_stats, candidate_analysis=candidate_stats,
+        )
+        if candidate_stats else None
+    )
     performance = (
         (skill_report or {}).get("performance")
         if isinstance(skill_report, dict)
@@ -271,6 +289,8 @@ def run_conversion(source: Path, doc_dir: Path) -> dict:
         "original_source_sha256": source_sha_before,
         "original_source_sha256_after": source_sha_after,
         "source_unchanged": source_unchanged,
+        "resumed": resume,
+        "numbering_scope": numbering_scope,
         "frozen_source": str(frozen_source),
         "frozen_source_sha256": frozen_source_sha256,
         "conversion_working_docx": (
@@ -317,9 +337,13 @@ def main() -> int:
         "--input-dir", help="Compatibility alias for a directory"
     )
     ap.add_argument("--inspect-only", action="store_true")
+    ap.add_argument("--resume-run", help="Existing run-YYYYMMDD-HHMMSS workspace to resume, never a new conversion")
+    ap.add_argument("--numbering-scope", choices=("line-start", "anywhere"), default="line-start")
     args = ap.parse_args()
 
     target = Path(args.input or args.input_dir).resolve()
+    if args.inspect_only and args.resume_run:
+        ap.error("--inspect-only and --resume-run cannot be combined")
     docs = discover_docs(target)
     states = [inspect_source(p) for p in docs]
     environment = environment_preflight()
@@ -351,13 +375,32 @@ def main() -> int:
         print(json.dumps(preflight, ensure_ascii=False, indent=2))
         return 0
 
-    run_dir = unique_run_dir(workspace_root_for(target))
-    run_dir.mkdir(parents=True)
-    write_json(run_dir / "SOURCE_STATE.json", preflight)
+    if args.resume_run:
+        if len(ready) != 1 or not target.is_file():
+            ap.error("--resume-run requires a single source DOCX (not a directory)")
+        run_dir = Path(args.resume_run).resolve()
+        saved_preflight_file = run_dir / "SOURCE_STATE.json"
+        if not saved_preflight_file.is_file():
+            raise FileNotFoundError(f"Resume run has no original SOURCE_STATE.json: {run_dir}")
+        saved = json.loads(saved_preflight_file.read_text(encoding="utf-8-sig"))
+        old_docs = saved.get("documents") or []
+        if (
+            len(old_docs) != 1
+            or Path(old_docs[0].get("source") or "").resolve() != target
+            or old_docs[0].get("sha256") != sha256_file(target)
+        ):
+            raise RuntimeError("Resume refused: original source path or hash differs from this run.")
+    else:
+        run_dir = unique_run_dir(workspace_root_for(target))
+        run_dir.mkdir(parents=True)
+        write_json(run_dir / "SOURCE_STATE.json", preflight)
 
     results = []
     for source in ready:
-        result = run_conversion(source, run_dir / source.stem)
+        result = run_conversion(
+            source, run_dir / source.stem,
+            resume=bool(args.resume_run), numbering_scope=args.numbering_scope,
+        )
         results.append(result)
         write_json(
             run_dir / source.stem / "CONVERSION_RESULT.json", result
@@ -383,6 +426,8 @@ def main() -> int:
         "created_at": dt.datetime.now().isoformat(),
         "skill": str(SKILL_PATH),
         "workspace": str(run_dir),
+        "numbering_scope": args.numbering_scope,
+        "resumed": bool(args.resume_run),
         "documents": results,
         "mandatory_entrypoint": "scripts/diagnose_after_conversion.py",
         "review_rule": (

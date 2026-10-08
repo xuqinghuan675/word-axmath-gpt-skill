@@ -48,6 +48,9 @@ def main() -> int:
     assert normalize_numbering_text("第1、2项") == "第1、2项"
     assert normalize_numbering_text("甲、乙") == "甲、乙"
     assert normalize_numbering_text("正文中的（1）、不是行首") == "正文中的（1）、不是行首"
+    assert normalize_numbering_text("正文中的（1）、是编号", scope="anywhere") == "正文中的（1）.是编号"
+    assert normalize_numbering_text("第1、2项", scope="anywhere") == "第1.2项"
+    assert normalize_numbering_text("3、第一项", scope="anywhere") == "3.第一项"
 
     xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="{W}">
@@ -70,6 +73,7 @@ def main() -> int:
       <w:object><w:r><w:t>OBJECT</w:t></w:r></w:object>
       <w:r><w:t>、不能跨对象</w:t></w:r>
     </w:p>
+    <w:p><w:r><w:t>注：（3）、子项</w:t></w:r></w:p>
   </w:body>
 </w:document>
 """
@@ -95,10 +99,24 @@ def main() -> int:
         assert audit["nonmath_text_contract_exact"] is True
         assert audit["numbering_punctuation_expected_change_count"] == 2
 
+        # A document requiring no changes must skip ZIP recompression and
+        # preserve all embedded OLE/media bytes and package metadata exactly.
+        untouched = Path(td) / "no-op.docx"
+        no_op = normalize_docx(output, untouched)
+        assert no_op["replacements"] == 0
+        assert output.read_bytes() == untouched.read_bytes()
+
         drift = Path(td) / "drift.docx"
         _replace_document_xml(output, drift, "普通、顿号", "普通、顿号X")
         drift_audit = audit_compare(source, drift)
         assert drift_audit["nonmath_text_contract_exact"] is False
+
+        aggressive = Path(td) / "anywhere.docx"
+        aggressive_report = normalize_docx(source, aggressive, scope="anywhere")
+        assert aggressive_report["scope"] == "anywhere"
+        assert audit_compare(source, aggressive, numbering_scope="anywhere")["nonmath_text_contract_exact"]
+        # An aggressive normalization must not silently pass the safer default audit.
+        assert not audit_compare(source, aggressive)["nonmath_text_contract_exact"]
 
     print("NUMBERING_PUNCTUATION_TEST_OK")
     return 0

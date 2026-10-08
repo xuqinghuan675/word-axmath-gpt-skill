@@ -203,3 +203,34 @@ python scripts\finalize_visual_review.py --report "<compare>\STRICT_FINAL_COMPAR
 ```
 
 只有 `acceptance_pass=true` 才是正式完成。
+
+
+## 2026-10-08 提速与恢复更新
+
+- **转换次数无 64 轮总上限。** AxMath 官方宏每次仍处理约 64～66 个公式；Skill 根据剩余公式量循环。每批必须有进度并保存，严禁强改插件内部批量。
+- **断点续跑：** 每批写 SHA-256 绑定的 `.conversion-checkpoint.json`；意外终止后输入同一原稿和原有运行目录，用 `--resume-run` 继续剩余 OfficeMath，绝不覆盖源稿或忽略哈希不一致。
+- **稳定性：** 同用户转换互斥；完成弹窗必须 `WaitingConvert=1` 才关闭；超时看门狗只对 PID 与进程创建时间双重证明属于本任务的 Word 生效（默认 1800 秒）。
+- **减少重复工作：** 页面图片解码一次，集中裁切该页公式；正常诊断走纯 XML 静态快筛和疑点 Word 验证，不循环进行全书 COM/全页渲染。
+- **更严格的风险检查：** 默认静态检查撇号、导数、集合运算符号，产生针对性的语义/视觉复核清单；背景和页面边框也纳入最终硬门禁。页面恢复按 OOXML 顺序插入且只写新文件。
+- **编号处理：** 默认 `--numbering-scope line-start`；可选 `anywhere` 处理行中数字紧跟顿号，但它会连 `第1、2项` 一并改写，必须按需显式选用并在诊断/最终比较时保持相同选项。
+- **测试：** GitHub Actions 增加真实 DOCX XML、页面格式安全、一次解码/页、断点保护等回归测试；真正 AxMath 可编辑性还要经十三月 Word 实机验证。
+
+恢复示例（目录必须是原来的 `run-...`，源文件哈希不能变化）：
+
+```powershell
+python scripts\one_click_convert.py --input "<原稿.docx>" --resume-run "<已有run-目录>"
+```
+
+详情见 `SKILL.md` 第 13 节；最终验收仍需逐页源稿/完成稿对比。
+
+### 新增：独立显示公式居中偏移修复（必须视觉证实）
+
+在十三月实机合成测试中，`m:oMath` 独占段落时，Word 的原生数学布局可能自动居中，但转换后的 `Equation.AxMath` 会按段落的左对齐位置显示；两者即使 Word COM `x_pt` 相同，PDF 实际像素也可能不同。现在静态检测会列出 `STANDALONE_DISPLAY_ALIGNMENT_VISUAL` 风险供逐页重点核查；**仅在源稿/完成稿视觉对比证实且明确指定公式序号后**，可执行最小修复：
+
+```powershell
+python scripts\repair_standalone_display_alignment.py --source "<冻结源稿>" --working "<待修复工作稿>" --output "<新完成稿.docx>" --ordinals "1,2" --expected-source-sha256 "<源SHA256>" --expected-working-sha256 "<工作稿SHA256>"
+```
+
+此修复只修改确认的公式段落 `w:pPr/w:jc=center`，不碰 AxMath/OLE 嵌入内容，也不强制给所有公式居中。修复后**必须重新逐页视觉验收**。十三月实机已验证 3 个合成独立公式从错误左对齐恢复与原稿一致，并通过 `acceptance_pass=true`。实机验证只覆盖小样本，不代表 4000 公式全书已跑完。
+
+另外，编号无替换时使用字节级复制，避免将包含数千个 OLE 的 DOCX 整体重新压缩；上层会复用已计算的 frozen source 和 working 静态分析结果，减少重复 ZIP/XML 读取。

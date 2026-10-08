@@ -94,20 +94,30 @@ def analyze(path: Path):
     }
 
 
-def compare(source: Path, candidate: Path):
-    a = analyze(source)
-    b = analyze(candidate)
+def compare(
+    source: Path,
+    candidate: Path,
+    *,
+    numbering_scope: str = "line-start",
+    source_analysis: dict | None = None,
+    candidate_analysis: dict | None = None,
+):
+    # A conversion runner already inventories the frozen source and working
+    # DOCX; passing those immutable snapshots prevents duplicate ZIP/XML
+    # scans. Callers without snapshots still get the original fresh path.
+    a = source_analysis if source_analysis is not None else analyze(source)
+    b = candidate_analysis if candidate_analysis is not None else analyze(candidate)
     exact = a["plain"] == b["plain"]
     flat_exact = "".join(a["plain"]) == "".join(b["plain"])
     normalized_source_contract = [
-        normalize_numbering_text(text) for text in a["plain_contract"]
+        normalize_numbering_text(text, scope=numbering_scope) for text in a["plain_contract"]
     ]
     numbering_normalized_exact = normalized_source_contract == b["plain_contract"]
     numbering_normalized_flat_exact = "".join(normalized_source_contract) == "".join(
         b["plain_contract"]
     )
     numbering_expected_change_count = sum(
-        len(numbering_dunhao_positions(text)) for text in a["plain_contract"]
+        len(numbering_dunhao_positions(text, scope=numbering_scope)) for text in a["plain_contract"]
     )
     nonmath_text_contract_exact = exact or numbering_normalized_exact
     diffs = []
@@ -133,6 +143,7 @@ def compare(source: Path, candidate: Path):
         "nonmath_text_numbering_normalized_exact": numbering_normalized_exact,
         "nonmath_text_numbering_normalized_flat_exact": numbering_normalized_flat_exact,
         "nonmath_text_contract_exact": nonmath_text_contract_exact,
+        "numbering_scope": numbering_scope,
         "numbering_punctuation_expected_change_count": numbering_expected_change_count,
         "nonmath_text_diff_count": len(diffs),
         "nonmath_text_diffs": diffs[:60],
@@ -157,8 +168,9 @@ if __name__ == "__main__":
     ap.add_argument("--source", required=True)
     ap.add_argument("--candidate", required=True)
     ap.add_argument("--out")
+    ap.add_argument("--numbering-scope", choices=("line-start", "anywhere"), default="line-start")
     args = ap.parse_args()
-    report = compare(Path(args.source), Path(args.candidate))
+    report = compare(Path(args.source), Path(args.candidate), numbering_scope=args.numbering_scope)
     text = json.dumps(report, ensure_ascii=False, indent=2)
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")

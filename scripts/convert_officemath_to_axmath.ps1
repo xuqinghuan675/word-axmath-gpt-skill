@@ -4,14 +4,17 @@ param(
   [string]$TemplatePath='',
   [string]$ReportPath='',
   [string]$ControlPath='',
-  [switch]$OverwriteOutput
+  [switch]$OverwriteOutput,
+  [switch]$ResumeOutput
 )
 $ErrorActionPreference='Stop'
 $InputFull=[IO.Path]::GetFullPath($InputDocx)
 $OutputFull=[IO.Path]::GetFullPath($OutputDocx)
 if([string]::Equals($InputFull,$OutputFull,[StringComparison]::OrdinalIgnoreCase)){throw 'Refusing to overwrite the input DOCX.'}
 if(-not (Test-Path -LiteralPath $InputFull)){throw "Input DOCX not found: $InputFull"}
-if((Test-Path -LiteralPath $OutputFull) -and -not $OverwriteOutput){throw "Output already exists: $OutputFull. Use -OverwriteOutput only for an intentional intermediate replacement."}
+if($ResumeOutput -and $OverwriteOutput){throw 'ResumeOutput and OverwriteOutput cannot be combined.'}
+if($ResumeOutput -and -not (Test-Path -LiteralPath $OutputFull)){throw "Resume working DOCX does not exist: $OutputFull"}
+if(-not $ResumeOutput -and (Test-Path -LiteralPath $OutputFull) -and -not $OverwriteOutput){throw "Output already exists: $OutputFull. Use -OverwriteOutput only for an intentional intermediate replacement."}
 function Resolve-AxMathTemplate {
   param([string]$Requested)
   if(-not [string]::IsNullOrWhiteSpace($Requested)){
@@ -59,6 +62,52 @@ $knownDumps=@()
 $wordPid=$null
 $wordPidOwned=$false
 $normalWasSaved=$null
+$checkpointPath=$OutputFull+'.conversion-checkpoint.json'
+$sourceSha=$null
+$resumeState=$null
+$wordCreationUnix=$null
+
+function Get-SharedSha256 {
+  param([string]$Path)
+  $stream=[IO.File]::Open($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+  try {
+    $hash=[Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($hash.ComputeHash($stream))).Replace('-','').ToLowerInvariant() }
+    finally { $hash.Dispose() }
+  } finally { $stream.Dispose() }
+}
+
+function Write-ConversionCheckpoint {
+  param([int]$Remaining,[int]$LastBatch,[string]$Status='saved')
+  # Save() finished before this checkpoint is published. The output hash makes
+  # a crash between a Word save and its journal update fail closed on resume.
+  $state=[ordered]@{
+    schema='axmath-conversion-checkpoint/v1'
+    source_path=$InputFull
+    source_sha256=$sourceSha
+    working_path=$OutputFull
+    working_sha256=(Get-SharedSha256 $OutputFull)
+    remaining_omath=$Remaining
+    last_batch=$LastBatch
+    status=$Status
+    updated_at=(Get-Date).ToUniversalTime().ToString('o')
+  }
+  $tmp=$checkpointPath+'.'+[Guid]::NewGuid().ToString('N')+'.tmp'
+  try {
+    [IO.File]::WriteAllText($tmp,($state|ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
+    if(Test-Path -LiteralPath $checkpointPath){
+      # File.Replace requires a non-empty backup path on .NET/PowerShell 7.
+      # Keep the previous journal safe until the atomic replacement succeeds.
+      $backup=$checkpointPath+'.'+[Guid]::NewGuid().ToString('N')+'.bak'
+      [IO.File]::Replace($tmp,$checkpointPath,$backup)
+      if(Test-Path -LiteralPath $backup){Remove-Item -LiteralPath $backup -Force}
+    } else {
+      [IO.File]::Move($tmp,$checkpointPath)
+    }
+  } finally {
+    if(Test-Path -LiteralPath $tmp){Remove-Item -LiteralPath $tmp -Force}
+  }
+}
 
 function Write-ControlState {
   param(
@@ -76,6 +125,8 @@ function Write-ControlState {
     preexisting_dialog_pids=@($Preexisting)
     before_omath=$Before
     after_omath=$After
+    owned_word_pid= $(if($wordPidOwned){$wordPid}else{$null})
+    owned_word_create_unix=$wordCreationUnix
     updated_at=(Get-Date).ToString('o')
   }
   $json=$state|ConvertTo-Json -Depth 4
@@ -83,11 +134,30 @@ function Write-ControlState {
 }
 
 try {
+  $sourceSha=Get-SharedSha256 $InputFull
+  if($ResumeOutput){
+    if(-not (Test-Path -LiteralPath $checkpointPath)){throw "Resume refused: no saved conversion checkpoint at $checkpointPath"}
+    $resumeState=Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8|ConvertFrom-Json
+    if(
+      $resumeState.schema -ne 'axmath-conversion-checkpoint/v1' -or
+      -not [string]::Equals([string]$resumeState.source_path,$InputFull,[StringComparison]::OrdinalIgnoreCase) -or
+      -not [string]::Equals([string]$resumeState.working_path,$OutputFull,[StringComparison]::OrdinalIgnoreCase) -or
+      $resumeState.source_sha256 -ne $sourceSha -or
+      $resumeState.working_sha256 -ne (Get-SharedSha256 $OutputFull)
+    ){throw 'Resume refused: source/working SHA-256 or checkpoint provenance changed.'}
+    $result.resumed_from_checkpoint=$true
+    $result.resumed_at_batch=[int]$resumeState.last_batch
+  } else {
+    if(Test-Path -LiteralPath $checkpointPath){throw "Refusing fresh conversion with a pre-existing recovery checkpoint: $checkpointPath"}
+    $result.resumed_from_checkpoint=$false
+  }
   $existingWord=@(Get-Process WINWORD -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
   $result.preexisting_word_pids=@($existingWord)
 
-  if(Test-Path -LiteralPath $OutputDocx){Remove-Item -LiteralPath $OutputDocx -Force}
-  Copy-Item -LiteralPath $InputDocx -Destination $OutputDocx
+  if(-not $ResumeOutput){
+    if(Test-Path -LiteralPath $OutputDocx){Remove-Item -LiteralPath $OutputDocx -Force}
+    Copy-Item -LiteralPath $InputDocx -Destination $OutputDocx
+  }
   # A frozen source may intentionally carry the Windows read-only attribute.
   # The working copy must be writable or Word will divert Save() into an
   # interactive Save As dialog after the first AxMath batch.
@@ -151,6 +221,7 @@ public static class WordPidNative {
   if(-not $wordPidOwned){
     throw "Could not establish an isolated task-owned Word process; pre-existing Word processes were left untouched."
   }
+  $wordCreationUnix=[DateTimeOffset]::new((Get-Process -Id $wordPid).StartTime.ToUniversalTime()).ToUnixTimeSeconds()
 
   $word.Visible=$false
   $word.DisplayAlerts=0
@@ -176,8 +247,19 @@ public static class WordPidNative {
   $result.before_inline_shapes=$doc.InlineShapes.Count
   $result.before_paragraphs=$doc.Paragraphs.Count
 
-  $batch=0
-  while($doc.OMaths.Count -gt 0 -and $batch -lt 64){
+  if($ResumeOutput){
+    if([int]$resumeState.remaining_omath -ne [int]$doc.OMaths.Count){
+      throw "Resume refused: saved OfficeMath count disagrees with checkpoint."
+    }
+    $batch=[int]$resumeState.last_batch
+  } else {
+    $batch=0
+    Write-ConversionCheckpoint -Remaining ([int]$doc.OMaths.Count) -LastBatch 0 -Status 'started'
+  }
+  # AxMath itself controls how many equations a macro call converts (~64).
+  # There is no arbitrary limit on the number of calls; strict progress
+  # checks and the external per-batch watchdog bound failures instead.
+  while($doc.OMaths.Count -gt 0){
     $batch++
     $before=$doc.OMaths.Count
     Set-ItemProperty $key -Name WaitingConvert -Value 0
@@ -193,7 +275,7 @@ public static class WordPidNative {
     $sw.Stop()
 
     $after=$doc.OMaths.Count
-    Write-ControlState -Phase 'idle' -Token $token -Batch $batch -Before $before -After $after
+    Write-ControlState -Phase 'saving_batch' -Token $token -Batch $batch -Before $before -After $after
 
     $converted=$before-$after
     $waitState=(Get-ItemProperty $key).WaitingConvert
@@ -226,6 +308,8 @@ public static class WordPidNative {
     $doc.Save()
     $saveSw.Stop()
     $batchRec.save_seconds=$saveSw.Elapsed.TotalSeconds
+    Write-ConversionCheckpoint -Remaining ([int]$doc.OMaths.Count) -LastBatch $batch
+    Write-ControlState -Phase 'idle' -Token $token -Batch $batch -Before $before -After $after
     $result.batches += [pscustomobject]$batchRec
     Write-Output ('BATCH {0}: {1}->{2}, converted={3}, macro={4:N2}s, save={5:N2}s, crashes={6}' -f $batch,$before,$after,$converted,$sw.Elapsed.TotalSeconds,$saveSw.Elapsed.TotalSeconds,$batchDumps.Count)
   }
@@ -241,6 +325,7 @@ public static class WordPidNative {
   try{$word.ScreenUpdating=$true}catch{}
   $result.pages=$doc.ComputeStatistics(2)
   $doc.Save()
+  Write-ConversionCheckpoint -Remaining 0 -LastBatch $batch -Status 'complete'
   $result.success=$true
 }
 catch {

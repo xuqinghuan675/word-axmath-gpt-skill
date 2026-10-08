@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import tempfile
 import zipfile
 from pathlib import Path
@@ -24,6 +25,10 @@ M = "{%s}" % NS["m"]
 _NUMBERING_DUNHAO_RE = re.compile(
     r"(?m)^[ \t\u3000]*(?:[0-9０-９]+|[（(][0-9０-９]+[)）])、"
 )
+_ANYWHERE_NUMBERING_RE = re.compile(
+    r"(?<![0-9０-９])(?:[0-9０-９]+|[（(][0-9０-９]+[)）])、"
+)
+SCOPES = ("line-start", "anywhere")
 
 
 def sha256_file(path: Path) -> str:
@@ -34,13 +39,16 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def numbering_dunhao_positions(text: str) -> list[int]:
+def numbering_dunhao_positions(text: str, *, scope: str = "line-start") -> list[int]:
     """Return character offsets of label-final Chinese dunhao characters."""
-    return [match.end() - 1 for match in _NUMBERING_DUNHAO_RE.finditer(text or "")]
+    if scope not in SCOPES:
+        raise ValueError(f"Unsupported numbering scope: {scope}")
+    pattern = _NUMBERING_DUNHAO_RE if scope == "line-start" else _ANYWHERE_NUMBERING_RE
+    return [match.end() - 1 for match in pattern.finditer(text or "")]
 
 
-def normalize_numbering_text(text: str) -> str:
-    positions = numbering_dunhao_positions(text)
+def normalize_numbering_text(text: str, *, scope: str = "line-start") -> str:
+    positions = numbering_dunhao_positions(text, scope=scope)
     if not positions:
         return text
     chars = list(text)
@@ -82,9 +90,9 @@ def _paragraph_projection(paragraph: Any) -> tuple[str, list[tuple[Any, int] | N
     return "".join(chars), mapping
 
 
-def _replace_in_paragraph(paragraph: Any) -> int:
+def _replace_in_paragraph(paragraph: Any, *, scope: str = "line-start") -> int:
     text, mapping = _paragraph_projection(paragraph)
-    positions = numbering_dunhao_positions(text)
+    positions = numbering_dunhao_positions(text, scope=scope)
     if not positions:
         return 0
 
@@ -121,7 +129,7 @@ def _document_counts(root: Any) -> dict[str, int]:
     }
 
 
-def normalize_docx(input_docx: Path, output_docx: Path) -> dict:
+def normalize_docx(input_docx: Path, output_docx: Path, *, scope: str = "line-start") -> dict:
     # Keep lxml lazy so one_click_convert.py --inspect-only can still report a
     # missing lxml dependency through environment_preflight instead of failing
     # at module import time.
@@ -131,25 +139,29 @@ def normalize_docx(input_docx: Path, output_docx: Path) -> dict:
     output_docx = Path(output_docx).resolve()
     if input_docx == output_docx:
         raise ValueError("Refusing in-place numbering punctuation normalization.")
+    if scope not in SCOPES:
+        raise ValueError(f"Unsupported numbering scope: {scope}")
     if not input_docx.is_file():
         raise FileNotFoundError(input_docx)
+    if output_docx.exists():
+        raise FileExistsError(f"Refusing to overwrite existing normalized DOCX: {output_docx}")
 
     parser = ET.XMLParser(remove_blank_text=False, resolve_entities=False)
     with zipfile.ZipFile(input_docx, "r") as zin:
         original_xml = zin.read("word/document.xml")
         root = ET.fromstring(original_xml, parser=parser)
         before = _document_counts(root)
-        replacements = sum(_replace_in_paragraph(p) for p in root.findall(".//w:p", NS))
+        replacements = sum(_replace_in_paragraph(p, scope=scope) for p in root.findall(".//w:p", NS))
         after = _document_counts(root)
         if before != after:
             raise RuntimeError(
                 f"numbering normalization changed document structure: {before} -> {after}"
             )
-        new_xml = ET.tostring(
-            root,
-            encoding="UTF-8",
-            xml_declaration=True,
-            standalone=True,
+        # Skip recompressing thousands of OLE objects when no label needs
+        # normalization. The copy stays byte-for-byte identical to the input.
+        new_xml = (
+            ET.tostring(root, encoding="UTF-8", xml_declaration=True, standalone=True)
+            if replacements else None
         )
 
         output_docx.parent.mkdir(parents=True, exist_ok=True)
@@ -161,10 +173,13 @@ def normalize_docx(input_docx: Path, output_docx: Path) -> dict:
         os.close(fd)
         temp_path = Path(temp_name)
         try:
-            with zipfile.ZipFile(temp_path, "w") as zout:
-                for info in zin.infolist():
-                    data = new_xml if info.filename == "word/document.xml" else zin.read(info.filename)
-                    zout.writestr(info, data)
+            if new_xml is None:
+                shutil.copyfile(input_docx, temp_path)
+            else:
+                with zipfile.ZipFile(temp_path, "w") as zout:
+                    for info in zin.infolist():
+                        data = new_xml if info.filename == "word/document.xml" else zin.read(info.filename)
+                        zout.writestr(info, data)
             os.replace(temp_path, output_docx)
         finally:
             if temp_path.exists():
@@ -177,6 +192,11 @@ def normalize_docx(input_docx: Path, output_docx: Path) -> dict:
         "input_sha256": sha256_file(input_docx),
         "output_sha256": sha256_file(output_docx),
         "replacements": replacements,
+        "scope": scope,
+        "warning": (
+            "anywhere is deliberately aggressive: 第1、2项 also becomes 第1.2项"
+            if scope == "anywhere" else None
+        ),
         "rule": "paragraph-or-line-start Arabic-number label: 、 -> .",
         "supports": ["1、", "12、", "（1）、", "(1)、", "fullwidth Arabic digits"],
         "structure_before": before,
@@ -191,9 +211,10 @@ def main() -> int:
     ap.add_argument("--input", required=True)
     ap.add_argument("--output", required=True)
     ap.add_argument("--report")
+    ap.add_argument("--scope", choices=SCOPES, default="line-start")
     args = ap.parse_args()
 
-    report = normalize_docx(Path(args.input), Path(args.output))
+    report = normalize_docx(Path(args.input), Path(args.output), scope=args.scope)
     text = json.dumps(report, ensure_ascii=False, indent=2)
     if args.report:
         Path(args.report).write_text(text, encoding="utf-8")
