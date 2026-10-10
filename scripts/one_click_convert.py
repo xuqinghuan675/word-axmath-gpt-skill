@@ -123,6 +123,11 @@ def inspect_source(path: Path) -> dict:
             "paragraphs": stats["paragraphs"],
             "omath": stats["omath"],
             "axmath": stats["axmath_ole"],
+            "ole_progid_counts": stats["ole_progid_counts"],
+            "non_axmath_ole_count": stats["non_axmath_ole_count"],
+            "non_axmath_ole_objects": stats["non_axmath_ole_objects"],
+            "nonmain_omath_count": stats["nonmain_omath_count"],
+            "nonmain_omath_by_part": stats["nonmain_omath_by_part"],
             "multi_sibling_group_count": structure.get("multi_sibling_group_count", 0),
             "multi_sibling_extra_nodes": structure.get("multi_sibling_extra_nodes", 0),
             "batch_collapse_signature_axmath_count": structure.get(
@@ -134,7 +139,15 @@ def inspect_source(path: Path) -> dict:
         row["error"] = str(exc)
         return row
 
-    if row["omath"] > 0 and row["axmath"] == 0:
+    if row["non_axmath_ole_count"] or row["nonmain_omath_count"]:
+        row["state"] = "blocked_unhandled_embedded_math"
+        row["required_action"] = (
+            "Inspect each listed legacy/unknown OLE or non-body OfficeMath. "
+            "Rebuild verified equations as native Word OfficeMath on a NEW DOCX; "
+            "re-run inspect-only on the normalized copy. Never accept a blind "
+            "Equation Editor 3.0 conversion dialog as semantic proof."
+        )
+    elif row["omath"] > 0 and row["axmath"] == 0:
         row["state"] = "ready_officemath"
     elif row["omath"] > 0 and row["axmath"] > 0:
         row["state"] = "mixed_math_needs_review"
@@ -302,6 +315,10 @@ def run_conversion(source: Path, doc_dir: Path, *, resume: bool = False, numberi
         proc.returncode == 0
         and candidate_stats
         and candidate_stats["omath"] == 0
+        and candidate_stats.get("non_axmath_ole_count", 0) == 0
+        and candidate_stats.get("nonmain_omath_count", 0) == 0
+        and (audit or {}).get("source_non_axmath_ole_count", 0) == 0
+        and (audit or {}).get("source_nonmain_omath_count", 0) == 0
         and count_acceptable
         and audit
         and audit.get("paragraph_count_equal")
@@ -338,6 +355,12 @@ def run_conversion(source: Path, doc_dir: Path, *, resume: bool = False, numberi
         ),
         "working_axmath": (
             candidate_stats["axmath_ole"] if candidate_stats else None
+        ),
+        "working_non_axmath_ole_count": (
+            candidate_stats["non_axmath_ole_count"] if candidate_stats else None
+        ),
+        "working_nonmain_omath_count": (
+            candidate_stats["nonmain_omath_count"] if candidate_stats else None
         ),
         "paragraph_count_equal": bool(
             audit and audit.get("paragraph_count_equal")
@@ -393,6 +416,13 @@ def main() -> int:
     if args.inspect_only:
         print(json.dumps(preflight, ensure_ascii=False, indent=2))
         return 0
+
+    blocked = [x for x in states if x.get("state") == "blocked_unhandled_embedded_math"]
+    if blocked:
+        preflight["status"] = "blocked_unhandled_embedded_math"
+        preflight["blocked_documents"] = [x["source"] for x in blocked]
+        print(json.dumps(preflight, ensure_ascii=False, indent=2))
+        return 1
 
     if not environment["ready_for_end_to_end"]:
         preflight["status"] = "blocked_missing_environment_dependency"

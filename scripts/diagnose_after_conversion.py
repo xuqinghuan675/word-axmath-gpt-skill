@@ -285,6 +285,10 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
         state != "exact"
         or not content.get("paragraph_count_equal")
         or not content.get("nonmath_text_contract_exact")
+        or content.get("source_non_axmath_ole_count")
+        or content.get("candidate_non_axmath_ole_count")
+        or content.get("source_nonmain_omath_count")
+        or content.get("candidate_nonmain_omath_count")
         or deep_geometry
     ):
         _write(outdir / "CONTENT_AUDIT.json", content)
@@ -305,6 +309,12 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
         "status": "starting",
         "repair_class": None,
         "next_actions": [],
+        "embedded_math_gate": {
+            "source_non_axmath_ole_count": content["source_non_axmath_ole_count"],
+            "working_non_axmath_ole_count": content["candidate_non_axmath_ole_count"],
+            "source_nonmain_omath_count": content["source_nonmain_omath_count"],
+            "working_nonmain_omath_count": content["candidate_nonmain_omath_count"],
+        },
         "do_not": [
             "Do not tune page count directly.",
             "Do not run global width/height/w:position sweeps.",
@@ -312,6 +322,30 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
             "Do not use AxMath->TeX roundtrip as the semantic source for derivative/prime formulas.",
         ],
     }
+
+    if any(report["embedded_math_gate"].values()):
+        report["status"] = "blocked_unhandled_embedded_math"
+        report["repair_class"] = "STOP_UNHANDLED_EMBEDDED_MATH"
+        report["blocking_objects"] = {
+            "source": content["source"]["non_axmath_ole_objects"],
+            "working": content["candidate"]["non_axmath_ole_objects"],
+        }
+        report["reason"] = (
+            "The source or working DOCX contains legacy/unknown embedded OLE "
+            "or OfficeMath outside the main story. Formula count equality "
+            "and zero residual body OMML do NOT prove these were converted."
+        )
+        report["next_actions"] = [
+            "Locate each blocking object by story_part, paragraph_index and ProgID.",
+            "Create a NEW normalized copy from the frozen source. For each "
+            "verified legacy equation, convert/rebuild it as native Word "
+            "OfficeMath and visually check its mathematics; preserve a mapping "
+            "including derivative-prime order. Unknown OLE is not automatically a formula.",
+            "Re-run one_click_convert.py --inspect-only on the normalized copy; "
+            "use that verified copy as the OfficeMath conversion source. "
+            "Do not silently approve a legacy OLE because the working copy lacks it.",
+        ]
+        return report
 
     if not content.get("paragraph_count_equal") or not content.get("nonmath_text_contract_exact"):
         report["status"] = "blocked_content_drift"

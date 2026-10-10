@@ -11,7 +11,7 @@ from pathlib import Path
 
 import psutil
 
-from audit_docx import compare
+from audit_docx import analyze, compare
 from execution_lock import conversion_lock
 
 
@@ -132,6 +132,19 @@ def _execute(args):
             or Path(state.get("working_path") or "").resolve() != out
         ):
             raise ValueError("Resume checkpoint does not match frozen source and saved working DOCX.")
+    source_inventory = analyze(src)
+    if source_inventory["non_axmath_ole_count"] or source_inventory["nonmain_omath_count"]:
+        raise RuntimeError(
+            "Frozen source contains unhandled embedded OLE/non-body math: "
+            f"{source_inventory['ole_progid_counts']}, "
+            f"non-body OMML={source_inventory['nonmain_omath_count']}. "
+            "Inspect and normalize equations on a separate DOCX before AxMath conversion."
+        )
+    if not source_inventory["omath"] or source_inventory["axmath_ole"]:
+        raise RuntimeError(
+            "Direct AxMath batch needs a native OfficeMath-only source. "
+            "Already-AxMath or mixed OfficeMath/AxMath must be reviewed first."
+        )
     out.parent.mkdir(parents=True, exist_ok=True)
     source_sha_before = _sha256_file(src)
     here = Path(__file__).resolve().parent
@@ -285,6 +298,10 @@ def _execute(args):
         and not watchdog_report.exists()
         and not lingering_word
         and audit
+        and not audit.get("source_non_axmath_ole_count", 0)
+        and not audit.get("candidate_non_axmath_ole_count", 0)
+        and not audit.get("source_nonmain_omath_count", 0)
+        and not audit.get("candidate_nonmain_omath_count", 0)
         and audit.get("paragraph_count_equal")
         and audit.get("nonmath_text_exact")
         and source_unchanged

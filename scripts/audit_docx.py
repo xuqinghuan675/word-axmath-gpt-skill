@@ -12,6 +12,7 @@ from normalize_numbering_punctuation import (
     normalize_numbering_text,
     numbering_dunhao_positions,
 )
+from embedded_object_inventory import scan_archive
 from source_math_structure import analyze_source_structure, classify_count_state
 
 NS = {
@@ -28,6 +29,7 @@ def analyze(path: Path):
     with zipfile.ZipFile(path) as z:
         names = z.namelist()
         root = ET.fromstring(z.read("word/document.xml"))
+        embedded = scan_archive(z, main_root=root)
     paras = root.findall(".//w:p", NS)
     plain = []
     plain_contract = []
@@ -84,6 +86,11 @@ def analyze(path: Path):
         "omath": len(root.findall(".//m:oMath", NS)),
         "axmath_ole": ax,
         "ole_total": len(oles),
+        "ole_progid_counts": embedded["ole_progid_counts"],
+        "non_axmath_ole_count": embedded["non_axmath_ole_count"],
+        "non_axmath_ole_objects": embedded["non_axmath_ole_objects"],
+        "nonmain_omath_count": embedded["nonmain_omath_count"],
+        "nonmain_omath_by_part": embedded["nonmain_omath_by_part"],
         "embeddings": sum(
             n.startswith("word/embeddings/") and not n.endswith("/") for n in names
         ),
@@ -137,6 +144,10 @@ def compare(
     return {
         "source": {k: v for k, v in a.items() if k not in {"plain", "plain_contract"}},
         "candidate": {k: v for k, v in b.items() if k not in {"plain", "plain_contract"}},
+        "source_non_axmath_ole_count": a["non_axmath_ole_count"],
+        "candidate_non_axmath_ole_count": b["non_axmath_ole_count"],
+        "source_nonmain_omath_count": a["nonmain_omath_count"],
+        "candidate_nonmain_omath_count": b["nonmain_omath_count"],
         "paragraph_count_equal": a["paragraphs"] == b["paragraphs"],
         "nonmath_text_exact": exact,
         "nonmath_text_flat_exact": flat_exact,

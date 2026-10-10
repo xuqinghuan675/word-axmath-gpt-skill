@@ -2,6 +2,10 @@
 
 This is exception-only operational detail extracted verbatim from the 2026-10-08 Skill baseline. Current `SKILL.md` has priority; consult this file only if the prescribed diagnostic class or Word/COM failure requires it. Never follow an old handoff instead of current frozen-source evidence.
 
+## Legacy OLE handling
+
+For `Equation.3`, `Equation.DSMT4`, MathType variants, or unknown OLE, use `embedded_object_inventory.py` to locate the story, paragraph and ProgID. Preserve the original source and hash. Review each object and rebuild verified mathematical content as editable OfficeMath on a separate DOCX, then inspect the new copy before starting AxMath conversion. Do not automatically confirm the Word conversion dialog for all formulas. Verify prime orders and indices manually; unknown OLE is not necessarily a formula. Keep the mapping and both source versions.
+
 ## 4. Formula count is a state machine, not a yes/no check
 
 `source_math_structure.py` inspects the frozen source before repair.

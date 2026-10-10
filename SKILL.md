@@ -16,6 +16,7 @@ description: Convert Microsoft Word OfficeMath to genuine editable AxMath, with 
 - Word COM 源稿读取与 AxMath 修改相互隔离（**source-reading from AxMath mutation**）；RPC 失败弃用已污染的 COM 实例。WPS 不能替代正式 Word+AxMath 转换。
 - 每批 `doc.Save()`、进度检查、可验证断点恢复和最终 AxMath 可编辑性不可删除。
 - 公式内容以冻结 OfficeMath/OMML 为真源；禁止凭宽度、页数、外观猜公式，禁止直接用损坏 AxMath 导出的 TeX 作为语义源。
+- OfficeMath 与 AxMath 不是全部公式类型：旧版 Equation Editor 3.0（如 `Equation.3`）、MathType（如 `Equation.DSMT4`）及未知 OLE 必须计入预检，不能仅凭 OfficeMath=0 / AxMath 数目一致宣告完成。
 - 禁止全局修改 OLE 大小、`w:position`、预览媒体或盲目拆长公式。页面数量只是观察数据，不是修复目标。
 
 ## 1. Mandatory entry protocol（普通任务）
@@ -43,6 +44,8 @@ python scripts\diagnose_after_conversion.py --source "<frozen_source>" --working
 
 预检会检查冻结原稿可读性、OfficeMath/AxMath 数量、段落、Windows Word PID、AxMath.dotm、PowerShell、Python 依赖（psutil、pywin32、lxml、numpy、Pillow、PyMuPDF、omml2latex）。中文路径控制台编码错误不等于 DOCX 损坏。
 
+**旧式公式预检与阻断**：预检额外输出所有 OLE 的 `ProgID`、所在 Word story/段落、异常对象清单；可单独运行 `python scripts/embedded_object_inventory.py "<docx>"` 定位。当 `state=blocked_unhandled_embedded_math` 时，禁止执行正式转换。必须先在**新 DOCX** 逐式核对旧式公式、恢复为原生 OfficeMath，重新预检通过后再转换。若出现 Word“Equation Editor 3.0 → OfficeMath”对话框，不得直接对全部公式批量确认；自动弹窗不证明数学语义正确。
+
 ## 2. 官方转换与断点
 
 AxMath 2.7.0.58 的 `AMSMML2AM` **单次**约处理 64–66 个公式；这是插件内部机制，不去绕过。Skill 的总调用次数**没有 64 轮上限**：只要剩余 OfficeMath 大于零就继续，但每一轮必须有严格递减进度，否则停止。
@@ -66,6 +69,7 @@ python scripts\one_click_convert.py --input "<original.docx>" --resume-run "<exi
 | 状态 | 必须保留的处理原则 |
 |---|---|
 | `exact` | 残余 OfficeMath=0 且 AxMath 对象数精确，继续语义/几何诊断。 |
+| `STOP_UNHANDLED_EMBEDDED_MATH` | 旧式 MathType / Equation Editor 3.0、未知 OLE 或正文之外的 OfficeMath 未验明：保留源对象、预览和原始哈希，逐一核实并在副本中修复，重新预检后才可转换。 |
 | `M1_MULTISIBLING_OMATHPARA` | 只有源稿证明确实存在多个直系 `m:oMath` sibling 才恢复合并丢失对象；先修结构，后几何。 |
 | `M2_SOURCE_VISUAL_WRAP_LOSS` | 必须同时证明源稿真实视觉换行和工作稿越过**实测**右边界；不能凭固定长度或页数猜。 |
 | `M2-B` | 只有源稿视觉行证据 + hash-bound repair ledger 才能一行拆一个 AxMath；M2-A 的内部 `aligned` 则仍是一个 AxMath。 |
@@ -96,7 +100,7 @@ python scripts\strict_final_compare.py --source "<frozen.docx>" --final "<final.
 python scripts\finalize_visual_review.py --report "<final-review>\STRICT_FINAL_COMPARE.json" --review "<final-review>\VISUAL_REVIEW.json"
 ```
 
-**仅 `acceptance_pass=true` 且全部公式可编辑、源稿未变、无遗留本任务 Word 进程，才是正式完成。** 不能用静态检查通过、页数相同、截图文件存在或完成宏返回码代替真实逐页检查。
+**仅 `acceptance_pass=true`、最终非 AxMath 的 OLE 对象为零、非正文 OfficeMath 残留为零、全部公式可编辑、源稿未变、无遗留本任务 Word 进程，才是正式完成。** 不能用静态检查通过、页数相同、截图文件存在或完成宏返回码代替真实逐页检查。
 
 ## 5. 输出、选项与性能纪律
 

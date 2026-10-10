@@ -181,6 +181,12 @@ def compare(
         "source_formula_count": len(source_formulas),
         "final_axmath_count": len(final_formulas),
         "final_omath_count": len(final_omath),
+        "source_non_axmath_ole_count": content_audit["source_non_axmath_ole_count"],
+        "final_non_axmath_ole_count": content_audit["candidate_non_axmath_ole_count"],
+        "source_nonmain_omath_count": content_audit["source_nonmain_omath_count"],
+        "final_nonmain_omath_count": content_audit["candidate_nonmain_omath_count"],
+        "final_ole_progid_counts": content_audit["candidate"]["ole_progid_counts"],
+        "final_unconverted_ole_objects": content_audit["candidate"]["non_axmath_ole_objects"],
         "page_count_equal": len(source_snapshot.get("pages", [])) == len(final_snapshot.get("pages", [])),
         "formula_count_equal": len(source_formulas) == len(final_formulas),
         "paragraph_count_equal": bool(content_audit.get("paragraph_count_equal")),
@@ -299,6 +305,10 @@ def compare(
 
     report["structural_pass"] = bool(
         report["formula_count_contract_ok"]
+        and report["source_non_axmath_ole_count"] == 0
+        and report["final_non_axmath_ole_count"] == 0
+        and report["source_nonmain_omath_count"] == 0
+        and report["final_nonmain_omath_count"] == 0
         and report["paragraph_contract_ok"]
         and report["nonmath_text_contract_ok"]
         and not report["center_alignment_breaks"]
@@ -310,6 +320,10 @@ def compare(
         and report["final_stable_during_compare"]
         and report["formula_count_contract_ok"]
         and report["final_omath_count"] == 0
+        and report["source_non_axmath_ole_count"] == 0
+        and report["final_non_axmath_ole_count"] == 0
+        and report["source_nonmain_omath_count"] == 0
+        and report["final_nonmain_omath_count"] == 0
         and report["paragraph_contract_ok"]
         and report["nonmath_text_contract_ok"]
         and report["page_style"]["equal"]
@@ -367,6 +381,8 @@ def main() -> int:
         "nonmath_text_contract_ok": report["nonmath_text_contract_ok"],
         "repair_ledger_ok": report["repair_ledger_ok"],
         "final_omath_count": report["final_omath_count"],
+        "final_non_axmath_ole_count": report["final_non_axmath_ole_count"],
+        "final_nonmain_omath_count": report["final_nonmain_omath_count"],
         "paragraph_count_equal": report["paragraph_count_equal"],
         "nonmath_text_exact": report["nonmath_text_exact"],
         "visual_evidence_complete": report["visual_evidence_complete"],
