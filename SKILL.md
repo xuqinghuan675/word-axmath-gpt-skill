@@ -5,6 +5,12 @@ description: Convert Microsoft Word OfficeMath to genuine editable AxMath, with 
 
 # Word → AxMath Skill · 主流程（精简版）
 
+## Codex 本地直连入口（不依赖网页电脑插件）
+
+在安装了 Microsoft Word + AxMath 的 Windows 电脑上，Codex 使用本机终端直接运行仓库根目录的 axmath.py，不得借用 thirteenthy / Qinghuan PC 1 网页电脑连接器或其租约。例如：python axmath.py inspect --input "原稿.docx"，通过预检后 python axmath.py convert --input "原稿.docx"。已有断点则用 resume --resume-run，而不是重复转换。
+
+原有 Python 脚本仍是唯一转换和验收实现。统一 CLI 另外提供 diagnose、compare、finalize、status；最终视觉审核**必须真实逐页查看**，status 不能自动批准。详见 docs/CODEX_DIRECT.md。云端无 Word COM 的 Codex 不能仅靠这个入口完成真实转换。
+
 **A new chat must read this file** before editing or converting any Word / OfficeMath / AxMath document. This file is authoritative after the user's current instruction. Detailed exceptional repair contracts are in `docs/REPAIR_REFERENCE.md`, loaded **only** when the diagnostic class requires them.
 
 **唯一主链：原稿冻结 → 官方 AxMath 转换 → 快速诊断 → 必要时定向修复 → 唯一一次最终完整逐页视觉验收。**
