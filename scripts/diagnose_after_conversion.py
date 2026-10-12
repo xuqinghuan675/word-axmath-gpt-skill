@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 from audit_docx import compare
@@ -590,6 +591,7 @@ def main() -> int:
     ap.add_argument("--numbering-scope", choices=("line-start", "anywhere"), default="line-start")
     ap.add_argument("--prime-review", help="Hash-bound verified AxMath prime semantic review manifest")
     args = ap.parse_args()
+    diagnose_started = time.perf_counter()
     report = diagnose(
         Path(args.source),
         Path(args.working),
@@ -598,6 +600,9 @@ def main() -> int:
         numbering_scope=args.numbering_scope,
         prime_review=Path(args.prime_review) if args.prime_review else None,
     )
+    report["performance_profile"] = {
+        "diagnose_seconds": round(time.perf_counter() - diagnose_started, 6),
+    }
     out = Path(args.outdir).resolve() / "NEXT_ACTION.json"
     _write(out, report)
     print(json.dumps({

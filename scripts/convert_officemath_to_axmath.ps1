@@ -293,6 +293,7 @@ public static class WordPidNative {
       seconds=$sw.Elapsed.TotalSeconds
       waiting_convert=$waitState
       save_seconds=0.0
+      checkpoint_seconds=0.0
       crash_dumps_new=@($batchDumps)
     }
 
@@ -308,7 +309,10 @@ public static class WordPidNative {
     $doc.Save()
     $saveSw.Stop()
     $batchRec.save_seconds=$saveSw.Elapsed.TotalSeconds
+    $checkpointSw=[Diagnostics.Stopwatch]::StartNew()
     Write-ConversionCheckpoint -Remaining ([int]$doc.OMaths.Count) -LastBatch $batch
+    $checkpointSw.Stop()
+    $batchRec.checkpoint_seconds=$checkpointSw.Elapsed.TotalSeconds
     Write-ControlState -Phase 'idle' -Token $token -Batch $batch -Before $before -After $after
     $result.batches += [pscustomobject]$batchRec
     Write-Output ('BATCH {0}: {1}->{2}, converted={3}, macro={4:N2}s, save={5:N2}s, crashes={6}' -f $batch,$before,$after,$converted,$sw.Elapsed.TotalSeconds,$saveSw.Elapsed.TotalSeconds,$batchDumps.Count)
@@ -389,9 +393,11 @@ finally {
   $result.total_seconds=$total.Elapsed.TotalSeconds
   $macroMeasure=$result.batches | Measure-Object -Property seconds -Sum
   $saveMeasure=$result.batches | Measure-Object -Property save_seconds -Sum
+  $checkpointMeasure=$result.batches | Measure-Object -Property checkpoint_seconds -Sum
   $convertedMeasure=$result.batches | Measure-Object -Property converted -Maximum
   $result.macro_seconds_total=[double]$macroMeasure.Sum
   $result.save_seconds_total=[double]$saveMeasure.Sum
+  $result.checkpoint_seconds_total=[double]$checkpointMeasure.Sum
   $result.non_macro_seconds=[math]::Max(0.0,$result.total_seconds-$result.macro_seconds_total)
   $result.macro_share_percent=if($result.total_seconds -gt 0){100.0*$result.macro_seconds_total/$result.total_seconds}else{0.0}
   $result.observed_max_batch_converted=[int]$convertedMeasure.Maximum
