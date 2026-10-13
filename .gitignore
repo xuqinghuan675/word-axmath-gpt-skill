@@ -7,6 +7,7 @@ venv/
 *.docx
 *.pdf
 *.png
+!scripts/assets/axmath_batch_pause_125pct_zh.png
 *.jpg
 *.jpeg
 *.wmf

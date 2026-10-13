@@ -3,11 +3,14 @@ from __future__ import annotations
 import argparse
 import ctypes
 import datetime
+import hashlib
 import json
 import time
 import winreg
 from pathlib import Path
 
+import numpy as np
+from PIL import Image, ImageGrab
 import psutil
 import win32api
 import win32con
@@ -15,6 +18,10 @@ import win32gui
 import win32process
 
 POLL = 0.35
+PAUSE_REFERENCE = Path(__file__).resolve().parent / "assets" / "axmath_batch_pause_125pct_zh.png"
+PAUSE_REFERENCE_SHA256 = "e2bf3f43192cf32ce2334066063eb36947bc79ddd06c7408d61363e51c2263c7"
+PAUSE_WINDOW_SIZE = (771, 331)
+PAUSE_BODY_BOX = (120, 120, 750, 250)
 kernel32 = ctypes.windll.kernel32
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 STILL_ACTIVE = 259
@@ -66,6 +73,33 @@ def read_waiting_convert():
 
 def is_confirmed_batch_completion(waiting_convert) -> bool:
     return waiting_convert == 1
+
+
+def pause_body_match(image: Image.Image, reference: Image.Image) -> tuple[bool, float, float]:
+    """Strictly match the captured normal pause body; conflicting dialogs differ."""
+    sample = np.asarray(image.convert("RGB"), dtype=np.int16)
+    expected = np.asarray(reference.convert("RGB"), dtype=np.int16)
+    if sample.shape != expected.shape:
+        return False, float("inf"), 1.0
+    delta = np.abs(sample - expected)
+    mean = float(delta.mean())
+    fraction = float(np.any(delta > 20, axis=2).mean())
+    return mean < 3.0 and fraction < 0.035, mean, fraction
+
+
+def visually_confirm_batch_pause(hwnd: int) -> tuple[bool, float, float]:
+    """Fail closed if size, reference hash, capture or visual content differs."""
+    try:
+        if hashlib.sha256(PAUSE_REFERENCE.read_bytes()).hexdigest() != PAUSE_REFERENCE_SHA256:
+            return False, float("inf"), 1.0
+        rect = win32gui.GetWindowRect(hwnd)
+        if (rect[2] - rect[0], rect[3] - rect[1]) != PAUSE_WINDOW_SIZE:
+            return False, float("inf"), 1.0
+        body = ImageGrab.grab(bbox=rect).crop(PAUSE_BODY_BOX)
+        with Image.open(PAUSE_REFERENCE) as reference:
+            return pause_body_match(body, reference)
+    except Exception:
+        return False, float("inf"), 1.0
 
 
 def verified_owned_word(state: dict) -> psutil.Process | None:
@@ -169,10 +203,24 @@ def main() -> int:
 
                 title = win32gui.GetWindowText(hwnd)
                 waiting_convert = read_waiting_convert()
-                # Historical successful batch-completion dialogs all reached
-                # WaitingConvert=1; the recorded conflict/no-progress case had
-                # WaitingConvert=0. Only confirmed completion is auto-closed.
-                if not is_confirmed_batch_completion(waiting_convert):
+                # AxMath may show the exact normal 64-formula pause while
+                # WaitingConvert remains 0. Match its captured message body
+                # on this PC before closing; an Office-command conflict has
+                # different pixels and remains untouched.
+                visually_confirmed = False
+                visual_mean = None
+                visual_fraction = None
+                if waiting_convert == 0:
+                    try:
+                        dialog_owned = (
+                            verified_owned_word(state) is not None
+                            and psutil.Process(pid).ppid() == int(state.get("owned_word_pid") or 0)
+                        )
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, ValueError, TypeError):
+                        dialog_owned = False
+                    if dialog_owned:
+                        visually_confirmed, visual_mean, visual_fraction = visually_confirm_batch_pause(hwnd)
+                if not (is_confirmed_batch_completion(waiting_convert) or visually_confirmed):
                     key = (token, int(pid))
                     if key not in ignored_dialogs:
                         ignored_dialogs.add(key)
@@ -190,7 +238,9 @@ def main() -> int:
                 with log.open("a", encoding="utf-8") as f:
                     f.write(
                         f"{datetime.datetime.now().isoformat()} closed batch dialog "
-                        f"token={token} pid={pid} hwnd={hwnd} title={title!r}\n"
+                        f"token={token} pid={pid} hwnd={hwnd} title={title!r} "
+                        f"WaitingConvert={waiting_convert!r} visually_confirmed={visually_confirmed} "
+                        f"visual_mean={visual_mean!r} visual_fraction={visual_fraction!r}\n"
                     )
                 break
             except Exception as e:

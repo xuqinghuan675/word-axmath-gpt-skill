@@ -67,6 +67,21 @@ def make_parser() -> argparse.ArgumentParser:
     convert.add_argument("--input", required=True, help="Original DOCX.")
     add_numbering_option(convert)
 
+    cache_analyze = commands.add_parser("cache-analyze", help="Read-only count of exact repeated OfficeMath formulas.")
+    cache_analyze.add_argument("--input", required=True)
+
+    cache_prepare = commands.add_parser("cache-prepare", help="Freeze and prepare repeated formulas for one official conversion each.")
+    cache_prepare.add_argument("--input", required=True)
+    cache_prepare.add_argument("--outdir", required=True)
+    cache_prepare.add_argument("--min-duplicates", type=int, default=64)
+
+    cache_restore = commands.add_parser("cache-restore", help="Restore genuine AxMath OLE after official conversion of the prepared DOCX.")
+    cache_restore.add_argument("--manifest", required=True)
+    cache_restore.add_argument("--ready", required=True)
+    cache_restore.add_argument("--output", required=True)
+    cache_restore.add_argument("--raw", action="store_true", help="Benchmark only: use the unnormalized conversion output.")
+    add_numbering_option(cache_restore)
+
     resume = commands.add_parser("resume", help="Resume the original checkpoint; NEVER reconvert from scratch.")
     resume.add_argument("--input", required=True, help="Original DOCX.")
     resume.add_argument("--resume-run", required=True, help="Existing run directory.")
@@ -109,6 +124,17 @@ def command_for(args: argparse.Namespace) -> list[str]:
             params.extend(["--resume-run", local_path(args.resume_run)])
         params.extend(["--numbering-scope", args.numbering_scope])
         script = "one_click_convert.py"
+    elif args.command == "cache-analyze":
+        params = ["analyze", "--input", local_path(args.input)]
+        script = "exact_duplicate_cache.py"
+    elif args.command == "cache-prepare":
+        params = ["prepare", "--input", local_path(args.input), "--outdir", local_path(args.outdir), "--min-duplicates", str(args.min_duplicates)]
+        script = "exact_duplicate_cache.py"
+    elif args.command == "cache-restore":
+        params = ["restore", "--manifest", local_path(args.manifest), "--ready", local_path(args.ready), "--output", local_path(args.output), "--numbering-scope", args.numbering_scope]
+        if args.raw:
+            params.append("--raw")
+        script = "exact_duplicate_cache.py"
     elif args.command == "diagnose":
         params = [
             "--source", local_path(args.source),

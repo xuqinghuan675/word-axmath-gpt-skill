@@ -202,12 +202,18 @@ def _execute(args):
         stderr=subprocess.PIPE,
     )
 
-    # Do not wait forever in communicate() after the dialog watchdog has
-    # already failed. Only the Popen we created here may be terminated;
-    # pre-existing Word sessions are never touched.
+    # Drain the converter's pipes while it runs. Its final JSON report can
+    # exceed a pipe buffer, so polling for exit before communicate() deadlocks.
+    # Only the Popen we created here may be terminated; pre-existing Word
+    # sessions are never touched.
     watcher_lost_while_running = False
-    while p.poll() is None:
-        if watcher.poll() is not None:
+    while True:
+        try:
+            stdout, stderr = p.communicate(timeout=0.35)
+            break
+        except subprocess.TimeoutExpired:
+            if watcher.poll() is None:
+                continue
             time.sleep(0.5)  # avoid a false race during normal shutdown
             if p.poll() is None:
                 watcher_lost_while_running = True
@@ -217,9 +223,8 @@ def _execute(args):
                 except subprocess.TimeoutExpired:
                     p.kill()
                     p.wait(timeout=8)
+            stdout, stderr = p.communicate()
             break
-        time.sleep(0.35)
-    stdout, stderr = p.communicate()
     try:
         watcher_stdout, watcher_stderr = watcher.communicate(timeout=8)
     except subprocess.TimeoutExpired:

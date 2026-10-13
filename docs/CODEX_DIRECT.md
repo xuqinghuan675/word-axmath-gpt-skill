@@ -37,6 +37,8 @@
 
 支持 --help 和子命令 --help；路径支持空格、中文与相对路径（路径在子进程切换到仓库工作目录前转换为绝对路径）。十三月电脑的 Python 优先使用 D:\我的python\python3.12\python.exe。缺少依赖时请按 requirements.txt 安装。
 
+精确重复的 OfficeMath 达到 64 个时，可选用缓存路径节省宏调用。先执行 `python .\axmath.py cache-analyze --input "<original.docx>"`；再用 `cache-prepare --input "<original.docx>" --outdir "<new-dir>"` 获得哈希绑定的 `CACHE_MANIFEST.json` 和 `prepared\<stem>_unique.docx`。对该准备稿执行上面的官方 `convert`；已有断点仍对准备稿使用 `resume`。转换 READY 生成后，执行 `python .\axmath.py cache-restore --manifest "<CACHE_MANIFEST.json>" --ready "<READY_FOR_GPT_REVIEW.json>" --output "<new-final.docx>"`。随后以缓存 manifest 的冻结原稿和恢复后的工作稿执行同一套 `diagnose`、`compare`、逐页查看与 `finalize`。准备或恢复失败时保留现场，不把缓存结果当成验收通过。
+
 ## Codex 自动发现（可选）
 
 普通情况下，在 Codex 任务指令中写出 SKILL.md 的真实绝对路径，它即可使用本地 CLI。需要 Codex 自动发现时，在相应本机用户目录的 .agents\skills 下创建一个指向仓库的目录联接，避免复制出两个渐渐分叉的脚本版本。
@@ -55,7 +57,7 @@ Codex 可能需要新会话才会发现新加入的 Skill。该目录联接是�
 ## 保留的不可绕过的约束
 
 1. 只能在安装并可执行 Microsoft Word + AxMath 的 Windows 用户会话运行真实转换；官方转换批次限制不变。
-2. inspect/convert/resume、diagnose、compare、finalize **分别**转发到既有的 one_click_convert.py、diagnose_after_conversion.py、strict_final_compare.py、finalize_visual_review.py；不额外实现另一套转换或接受逻辑。
+2. inspect/convert/resume、diagnose、compare、finalize **分别**转发到既有的 one_click_convert.py、diagnose_after_conversion.py、strict_final_compare.py、finalize_visual_review.py；缓存命令只在官方转换前后处理完全相同的公式对象，不另起公式转换或验收引擎。
 3. 不覆盖原始 DOCX，检查点必须可验证；禁止关闭用户原有 Word；出现错误要按冻结源稿逐式修复。
 4. status 只读并摘要已有 JSON；即使静态检查通过也不能自动判定视觉验收完成，必须确实查看所有页面和公式可编辑性。
 5. 新 CLI 的无 Word 单元测试：python -m unittest discover -s scripts -p "test_axmath_cli.py" -v；静态通过不代表真实 Word/AxMath 排版测试通过。

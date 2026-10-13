@@ -9,7 +9,7 @@ description: Convert Microsoft Word OfficeMath to genuine editable AxMath, with 
 
 在安装了 Microsoft Word + AxMath 的 Windows 电脑上，Codex 使用本机终端直接运行仓库根目录的 axmath.py，不得借用 thirteenthy / Qinghuan PC 1 网页电脑连接器或其租约。例如：python axmath.py inspect --input "原稿.docx"，通过预检后 python axmath.py convert --input "原稿.docx"。已有断点则用 resume --resume-run，而不是重复转换。
 
-原有 Python 脚本仍是唯一转换和验收实现。统一 CLI 另外提供 diagnose、compare、finalize、status；最终视觉审核**必须真实逐页查看**，status 不能自动批准。详见 docs/CODEX_DIRECT.md。云端无 Word COM 的 Codex 不能仅靠这个入口完成真实转换。
+官方 AxMath 宏仍是唯一公式转换实现。统一 CLI 另外提供 cache-analyze、cache-prepare、cache-restore、diagnose、compare、finalize、status；最终视觉审核**必须真实逐页查看**，status 不能自动批准。详见 docs/CODEX_DIRECT.md。云端无 Word COM 的 Codex 不能仅靠这个入口完成真实转换。
 
 **A new chat must read this file** before editing or converting any Word / OfficeMath / AxMath document. This file is authoritative after the user's current instruction. Detailed exceptional repair contracts are in `docs/REPAIR_REFERENCE.md`, loaded **only** when the diagnostic class requires them.
 
@@ -56,7 +56,7 @@ python scripts\diagnose_after_conversion.py --source "<frozen_source>" --working
 
 AxMath 2.7.0.58 的 `AMSMML2AM` **单次**约处理 64–66 个公式；这是插件内部机制，不去绕过。Skill 的总调用次数**没有 64 轮上限**：只要剩余 OfficeMath 大于零就继续，但每一轮必须有严格递减进度，否则停止。
 
-- `WaitingConvert=1` 仅用作完成确认，不是调速开关；未经证实的对话框不得自动关闭。
+- `WaitingConvert=1` 仅用作完成确认，不是调速开关；本机截图与已验证的正常批次暂停提示严格一致时，也可关闭该任务所属弹窗。Office 命令冲突提示必须保持原样供排查；未经证实的对话框不得自动关闭。视觉识别不匹配时继续按原看门狗规则失败关闭。
 - 每批保存后生成哈希绑定的 `.conversion-checkpoint.json`；源稿、工作稿、残余公式数和轮数必须一致才允许续跑。
 - 同用户转换互斥；每轮 Word/AxMath 超时看门狗默认 1800 秒，且只能操作已证实属于任务的进程。
 - 断点恢复既不重新覆盖工作副本，也不跳过事后完整诊断。
@@ -67,6 +67,20 @@ python scripts\one_click_convert.py --input "<original.docx>" --resume-run "<exi
 ```
 
 高级单文件续跑：`python scripts\run_skill.py --input "<frozen.docx>" --output "<partial-working.docx>" --resume`。其余内部 PowerShell/看门狗脚本由入口调用，不要手工并发运行。
+
+### 精确重复公式复用（仅重复较多时）
+
+原稿有至少 64 个 **XML 完全相同** 的重复 OfficeMath、且预检没有其他类型公式对象时，可先用 `python axmath.py cache-analyze --input "<original.docx>"` 只读计数。满足条件后，在新的目录执行：
+
+```powershell
+python axmath.py cache-prepare --input "<original.docx>" --outdir "<new-cache-workspace>"
+python axmath.py convert --input "<new-cache-workspace>\prepared\<stem>_unique.docx"
+python axmath.py cache-restore --manifest "<new-cache-workspace>\CACHE_MANIFEST.json" --ready "<unique-run>\READY_FOR_GPT_REVIEW.json" --output "<new-cache-workspace>\<stem>_AxMath-reused.docx"
+```
+
+`cache-prepare` 冻结原稿、用书签暂存重复公式位置；官方 `convert` 只转换每种原样公式的首个实例，仍按 AxMath 的 64–66 式批次保存与断点续跑；`cache-restore` 为重复位置复制**真实 AxMath OLE**及其预览，独立分配关系和对象 ID。它校验原稿/准备稿哈希、官方完整 checkpoint、公式总数、段落与非公式文本，然后生成新工作稿。中断时只对准备稿和其已有 run 使用 `axmath.py resume`，不得重头转换。任何准备、恢复或审计失败都保留现场，不能把缓存结果当成交付。
+
+随后必须以 `CACHE_MANIFEST.json` 的 `frozen_source` 和 `cache-restore` 的 `working_docx` 运行原有 `axmath.py diagnose`；诊断、定向修复和第 4 节逐页验收标准**完全相同**。`cache-restore --raw` 只供与旧转换阶段公平比较，不作普通交付。重复不足 64 个、存在不支持的公式结构或用户要求原样逐式转换时，直接使用普通 `convert`。
 
 ## 3. 异常时按类修复（读高级参考，不走全流程）
 
