@@ -10,6 +10,7 @@ from pathlib import Path
 
 from audit_docx import compare
 from build_source_tex_map import build_multisibling_map, static_axmath_inventory
+from class_e_review import validate as validate_class_e_review
 from formula_geometry_audit import audit as geometry_audit
 from restore_word_page_layout import page_style_report
 from source_semantic_risks import scan_source_math
@@ -273,7 +274,7 @@ def _append_m2_actions(report: dict, source: Path, working: Path, outdir: Path, 
     ])
 
 
-def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool = False, numbering_scope: str = "line-start", prime_review: Path | None = None) -> dict:
+def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool = False, numbering_scope: str = "line-start", prime_review: Path | None = None, class_e_review: Path | None = None) -> dict:
     source = source.resolve()
     working = working.resolve()
     outdir = outdir.resolve()
@@ -409,6 +410,15 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
             int(x["ordinal"]) for x in fast["overwide_source_singleline_review"]
         ],
     }
+    class_e_state = {"valid": True, "verified_ordinals": [], "rebuild_ordinals": [], "review": None}
+    if class_e_review is not None:
+        class_e_state = validate_class_e_review(class_e_review, source, working)
+    report["class_e_review"] = class_e_state
+    if class_e_state["valid"]:
+        verified_e = set(class_e_state["verified_ordinals"])
+        fast_queues["CLASS_E_SEMANTIC_REBUILD"] = sorted(
+            (set(fast_queues["CLASS_E_SEMANTIC_REBUILD"]) | set(class_e_state["rebuild_ordinals"])) - verified_e
+        )
     report["queues"] = fast_queues
     # Static OMML scan costs no Word COM calls, even for thousands of formulas.
     semantic = scan_source_math(source)
@@ -429,14 +439,22 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
     page_style = page_style_report(source, working)
     report["page_style"] = page_style
 
+    if not class_e_state["valid"]:
+        report["status"] = "repair_review_required"
+        report["repair_class"] = "CLASS_E_REVIEW_INVALID"
+        report["next_actions"].append(
+            "Class E review is stale or invalid for this frozen source/working DOCX. "
+            "Reinspect selected ordinals and prepare a new hash-bound review."
+        )
+
     if fast_queues["CLASS_E_SEMANTIC_REBUILD"]:
         report["status"] = "repair_review_required"
-        report["repair_class"] = "CLASS_E_SEMANTIC_REBUILD"
+        report["repair_class"] = report["repair_class"] or "CLASS_E_SEMANTIC_REBUILD"
         report["next_actions"].append(
-            "For the listed tiny-shell ordinals, rebuild semantics only from the "
-            "same frozen-source OfficeMath ordinal. Validate Word LaTeX and fall "
-            "back to exact OMML->LaTeX when malformed; apply an approved map with "
-            "repair_axmath_from_approved_tex.ps1."
+            "For each listed Class E ordinal, run inspect_axmath_tex.ps1 on a temporary "
+            "copy, then class_e_review.py prepare. Record frozen OMML, exported TeX "
+            "and an evidenced verified_match or needs_rebuild conclusion. Rebuild actual "
+            "defects only from frozen OMML via approved TeX and official AxMath macro."
         )
 
     if fast_queues["M2_SOURCE_VISUAL_WRAP_LOSS"]:
@@ -507,8 +525,10 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
             "default merely to make diagnostic metrics reach zero."
         )
         report["next_actions"].extend([
-            "Run strict_final_compare.py once, inspect every source-vs-final page, "
-            "then finalize_visual_review.py.",
+            "Run inspect_axmath_tex.ps1 -AllAxMath once on the final candidate, "
+            "then strict_final_compare.py --internal-audit <complete export JSON>. "
+            "Inspect every source and final page by cross-page content anchors, "
+            "including clear closeups of small inline formulas, then finalize_visual_review.py.",
             (
                 "If final visual review exposes an ambiguous formula defect that "
                 "cannot be classified locally, re-run diagnose_after_conversion.py "
@@ -536,6 +556,11 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
         }),
         "CLASS_C_EXTERNAL_BOX": geo.get("calibration_ordinals", []),
     }
+    if class_e_state["valid"]:
+        verified_e = set(class_e_state["verified_ordinals"])
+        deep_queues["CLASS_E_SEMANTIC_REBUILD"] = sorted(
+            (set(deep_queues["CLASS_E_SEMANTIC_REBUILD"]) | set(class_e_state["rebuild_ordinals"])) - verified_e
+        )
     report["queues"] = deep_queues
 
     if deep_queues["CLASS_E_SEMANTIC_REBUILD"] or deep_queues["CLASS_E_PRIME_RISK"]:
@@ -571,8 +596,10 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
     if report["status"] == "starting":
         report["status"] = "ready_for_strict_final_compare"
         report["next_actions"] = [
-            "Run strict_final_compare.py once, inspect every source-vs-final page, "
-            "then finalize_visual_review.py. Do not mutate from diagnostics alone."
+            "Run inspect_axmath_tex.ps1 -AllAxMath once, then strict_final_compare.py "
+            "--internal-audit <complete export JSON>. Inspect all pages by content "
+            "anchors and zoom small inline formulas before finalize_visual_review.py. "
+            "Do not mutate from diagnostics alone."
         ]
     return report
 
@@ -590,6 +617,7 @@ def main() -> int:
     )
     ap.add_argument("--numbering-scope", choices=("line-start", "anywhere"), default="line-start")
     ap.add_argument("--prime-review", help="Hash-bound verified AxMath prime semantic review manifest")
+    ap.add_argument("--class-e-review", help="Hash-bound review of selected Class E internal exports")
     args = ap.parse_args()
     diagnose_started = time.perf_counter()
     report = diagnose(
@@ -599,6 +627,7 @@ def main() -> int:
         deep_geometry=args.deep_geometry,
         numbering_scope=args.numbering_scope,
         prime_review=Path(args.prime_review) if args.prime_review else None,
+        class_e_review=Path(args.class_e_review) if args.class_e_review else None,
     )
     report["performance_profile"] = {
         "diagnose_seconds": round(time.perf_counter() - diagnose_started, 6),

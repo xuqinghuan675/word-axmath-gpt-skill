@@ -29,10 +29,13 @@
     # 只按 NEXT_ACTION.json 指出的类定向修复
     python .\axmath.py status --path "<review-dir>"
 
-    # 4. 诊断所有阻塞均清零后，一次性做最终完整逐页源稿比较
-    python .\axmath.py compare --source "<frozen_source>" --final "<final.docx>" --outdir "<final-review-dir>" --expected-source-sha256 "<frozen_sha256>"
+    # 4. 对最终候选稿的全部 AxMath 做一次只读内部内容导出；空内容会阻断验收
+    powershell -File .\scripts\inspect_axmath_tex.ps1 -InputDocx "<final.docx>" -AllAxMath -OutputJson "<final-review-dir>\FINAL_AXMATH_INTERNAL_TEX.json"
 
-    # 5. 逐页实际查看、填写 VISUAL_REVIEW.json 后方可确认
+    # 5. 用上一步完整、哈希绑定的内部审核做最终逐页源稿比较
+    python .\axmath.py compare --source "<frozen_source>" --final "<final.docx>" --outdir "<final-review-dir>" --expected-source-sha256 "<frozen_sha256>" --internal-audit "<final-review-dir>\FINAL_AXMATH_INTERNAL_TEX.json"
+
+    # 6. 按正文/公式锚点跨页核对，放大小型行内公式，填写 VISUAL_REVIEW.json 后确认
     python .\axmath.py finalize --report "<final-review-dir>\STRICT_FINAL_COMPARE.json" --review "<final-review-dir>\VISUAL_REVIEW.json"
 
 支持 --help 和子命令 --help；路径支持空格、中文与相对路径（路径在子进程切换到仓库工作目录前转换为绝对路径）。十三月电脑的 Python 优先使用 D:\我的python\python3.12\python.exe。缺少依赖时请按 requirements.txt 安装。

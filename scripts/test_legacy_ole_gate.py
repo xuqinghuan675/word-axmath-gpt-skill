@@ -65,6 +65,20 @@ def _mock_snapshots(path: Path, *_args, **_kwargs) -> dict:
     }
 
 
+def _complete_internal_audit(path: Path, docx: Path) -> Path:
+    digest = hashlib.sha256(docx.read_bytes()).hexdigest()
+    path.write_text(json.dumps({
+        "schema": "axmath-internal-tex-diagnostic/v1",
+        "target_scope": "all", "input": str(docx.resolve()),
+        "input_sha256_before": digest, "input_sha256_after": digest,
+        "input_unchanged": True, "diagnostic_only": True,
+        "success": True, "integrity_pass": True, "axmath_count": 1,
+        "failed": [],
+        "exports": [{"ordinal": 1, "success": True, "axmath_exported_tex": "$x+y$"}],
+    }), encoding="utf-8")
+    return path
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
@@ -136,11 +150,17 @@ def main() -> int:
             mock.patch.object(strict_final_compare, "_build_side_by_side", return_value=[{"page": 1, "path": "mock.png", "sha256": "fake"}]),
         ):
             source_sha = hashlib.sha256(clean.read_bytes()).hexdigest()
-            failed = strict_final_compare.compare(clean, working, root / "strict-fail", source_sha)
+            failed = strict_final_compare.compare(
+                clean, working, root / "strict-fail", source_sha,
+                internal_audit=_complete_internal_audit(root / "working-internal.json", working),
+            )
             assert not failed["hard_content_pass"], failed
             assert failed["final_non_axmath_ole_count"] == 1
 
-            clean_final = strict_final_compare.compare(clean, removed_legacy, root / "strict-clean", source_sha)
+            clean_final = strict_final_compare.compare(
+                clean, removed_legacy, root / "strict-clean", source_sha,
+                internal_audit=_complete_internal_audit(root / "clean-internal.json", removed_legacy),
+            )
             assert clean_final["final_non_axmath_ole_count"] == 0
             assert clean_final["hard_content_pass"], clean_final
 

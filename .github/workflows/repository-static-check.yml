@@ -29,6 +29,8 @@ jobs:
           python scripts/test_conversion_resilience.py
           python scripts/test_slim_pipeline.py
           python scripts/test_legacy_ole_gate.py
+          python scripts/test_internal_content_gate.py
+          python -m unittest discover -s scripts -p "test_axmath_cli.py" -v
       - name: Parse PowerShell scripts
         shell: pwsh
         run: |

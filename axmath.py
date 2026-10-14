@@ -33,6 +33,7 @@ STATUS_FIELDS = (
     "final",
     "source_sha256",
     "final_sha256",
+    "internal_audit_pass",
     "acceptance_pass",
     "visual_review_passed",
     "visual_review_required",
@@ -93,6 +94,7 @@ def make_parser() -> argparse.ArgumentParser:
     diagnose.add_argument("--outdir", required=True)
     diagnose.add_argument("--deep-geometry", action="store_true")
     diagnose.add_argument("--prime-review", help="Already verified hash-bound prime review manifest.")
+    diagnose.add_argument("--class-e-review", help="Hash-bound selected internal-content review manifest.")
     add_numbering_option(diagnose)
 
     compare = commands.add_parser("compare", help="Generate final source-vs-AxMath full-page visual review.")
@@ -100,6 +102,7 @@ def make_parser() -> argparse.ArgumentParser:
     compare.add_argument("--final", required=True, help="Final candidate DOCX, not the source.")
     compare.add_argument("--outdir", required=True)
     compare.add_argument("--expected-source-sha256", required=True)
+    compare.add_argument("--internal-audit", required=True, help="Complete -AllAxMath internal export JSON.")
     compare.add_argument("--repair-ledger", help="Validated ledger for explicitly approved M2-B line splitting.")
     compare.add_argument("--center-tolerance-pt", type=float, help="Normally do not override the original default.")
     add_numbering_option(compare)
@@ -146,6 +149,8 @@ def command_for(args: argparse.Namespace) -> list[str]:
             params.append("--deep-geometry")
         if args.prime_review:
             params.extend(["--prime-review", local_path(args.prime_review)])
+        if args.class_e_review:
+            params.extend(["--class-e-review", local_path(args.class_e_review)])
         script = "diagnose_after_conversion.py"
     elif args.command == "compare":
         params = [
@@ -153,6 +158,7 @@ def command_for(args: argparse.Namespace) -> list[str]:
             "--final", local_path(args.final),
             "--outdir", local_path(args.outdir),
             "--expected-source-sha256", args.expected_source_sha256,
+            "--internal-audit", local_path(args.internal_audit),
             "--numbering-scope", args.numbering_scope,
         ]
         if args.repair_ledger:

@@ -93,7 +93,7 @@ python axmath.py cache-restore --manifest "<new-cache-workspace>\CACHE_MANIFEST.
 | `M1_MULTISIBLING_OMATHPARA` | 只有源稿证明确实存在多个直系 `m:oMath` sibling 才恢复合并丢失对象；先修结构，后几何。 |
 | `M2_SOURCE_VISUAL_WRAP_LOSS` | 必须同时证明源稿真实视觉换行和工作稿越过**实测**右边界；不能凭固定长度或页数猜。 |
 | `M2-B` | 只有源稿视觉行证据 + hash-bound repair ledger 才能一行拆一个 AxMath；M2-A 的内部 `aligned` 则仍是一个 AxMath。 |
-| Class E（语义） | 冻结 OMML → 经验证的 TeX → 真实 AxMath；如果 Word 输出损坏则使用 OMML→LaTeX 备用转换，写入前核对语义。 |
+| Class E（内部内容/语义） | 黑块、乱码、单字符公式异常、手机截图或内部公式不符时，先用正文/公式锚点定位**最终稿 AxMath 对象序号**；`inspect_axmath_tex.ps1` 只在临时副本导出该对象。冻结 OMML → 经验证的 TeX → 官方宏重建真实 AxMath 到**新 DOCX**；Word 输出损坏则用 OMML→LaTeX 备用转换。禁止以坏对象的导出或共享 WMF/预览为语义源。 |
 | Class A/B/C/D | 仅对明确序号、已证实的目标执行 inline、baseline probe、OLE 壳校准或预览/缓存诊断；不可全局处理。 |
 
 即使几何正常，撇号/导数也是独立语义风险。AxMath 2.7.0.58 经实机验证：一阶 `\prime`、二阶 `''`、三阶 `'''`；高风险源式必须用真实 AxMath 和冻结源稿审定，`PRIME_REVIEW_TEMPLATE.json` 不能自动填写通过。
@@ -104,23 +104,31 @@ python axmath.py cache-restore --manifest "<new-cache-workspace>\CACHE_MANIFEST.
 
 AxMath 内部公式与预览不一致时用 `inspect_axmath_tex.ps1` **只在临时副本**导出检查；不要直接替换共享 WMF/预览。无证据不要运行几何试错脚本。
 
+公式与 AxMath 对象一一对应时，Class E 的选定对象应生成哈希绑定审核记录：`inspect_axmath_tex.ps1 -Ordinals "<序号>"` → `python scripts/class_e_review.py prepare --source "<frozen>" --working "<working>" --inspection "<internal.json>" --ordinals "<序号>" --out "<review.json>"`。核对冻结 OMML、内部 TeX 后填写 `decision=verified_match` 或 `needs_rebuild` 与具体证据，运行 `class_e_review.py validate`，再用 `diagnose_after_conversion.py --class-e-review "<review.json>"` 复核。同一源稿/工作稿/导出哈希下，已证实正确的短公式不再反复进入 Class E 修复队列；文档一变，记录自动失效。内部为空或含控制字符不能标为正确。M2-B 拆行时先按已验 ledger 建立源式与结果对象的映射，不得套用一一对应序号。
+
 ## 4. 正式逐页验收（必做）
 
-只有诊断队列不含待修复/未批准的关键语义风险时：
+只有诊断队列不含待修复/未批准的关键语义风险时，**先对最终候选稿全部 AxMath 做一次只读内部导出**。对象数量正确、页面看着正常，都不能替代这一门禁；空内容或控制字符必须回到 Class E。`-Ordinals` 仍限于局部诊断，最终完整审核使用 `-AllAxMath`：
 
 ```powershell
-python scripts\strict_final_compare.py --source "<frozen.docx>" --final "<final.docx>" --outdir "<final-review>" --expected-source-sha256 "<frozen_sha>"
+powershell -File scripts\inspect_axmath_tex.ps1 -InputDocx "<final.docx>" -AllAxMath -OutputJson "<final-review>\FINAL_AXMATH_INTERNAL_TEX.json"
+```
+
+导出完整且无空内容/控制字符后：
+
+```powershell
+python scripts\strict_final_compare.py --source "<frozen.docx>" --final "<final.docx>" --outdir "<final-review>" --expected-source-sha256 "<frozen_sha>" --internal-audit "<final-review>\FINAL_AXMATH_INTERNAL_TEX.json"
 ```
 
 如果合法 `M2-B` 拆行，追加 `--repair-ledger "<verified-ledger.json>"`。若显式使用了 `--numbering-scope anywhere`，诊断和最终比较也必须传同一选项。
 
-最终比较必须重新打开 Word、逐页渲染源稿和结果、生成全部并排截图。GPT **实际查看每一页**，检查 AxMath 正文语义、撇号/集合符号、跨行、居中、边界、背景/边框、正文与分页差异；填写真实 `VISUAL_REVIEW.json` 后：
+最终比较必须重新打开 Word、逐页渲染源稿和结果、生成全部并排截图。**相同页码不等于相同内容**：公式重排可改变页数和页边界，必须按题号、正文短语、公式序号等内容锚点跨页追踪。GPT **实际查看源稿和结果稿每一页**，对小型行内公式放大或裁出足够清晰的局部视图；检查 AxMath 正文语义、撇号/集合符号、跨行、居中、边界、背景/边框、正文与分页差异，并在 `VISUAL_REVIEW.json` 写明跨页锚点和局部视图证据后：
 
 ```powershell
 python scripts\finalize_visual_review.py --report "<final-review>\STRICT_FINAL_COMPARE.json" --review "<final-review>\VISUAL_REVIEW.json"
 ```
 
-**仅 `acceptance_pass=true`、最终非 AxMath 的 OLE 对象为零、非正文 OfficeMath 残留为零、全部公式可编辑、源稿未变、无遗留本任务 Word 进程，才是正式完成。** 不能用静态检查通过、页数相同、截图文件存在或完成宏返回码代替真实逐页检查。
+**仅完整内部导出通过、`acceptance_pass=true`、最终非 AxMath 的 OLE 对象为零、非正文 OfficeMath 残留为零、全部公式可编辑、源稿未变、无遗留本任务 Word 进程，才是正式完成。** 不能用静态检查通过、对象数相同、页数相同、截图文件存在或完成宏返回码代替真实逐页检查。内部导出证明非空与可读取；非空但语义错误仍靠冻结 OMML 对照和视觉/人工审查识别。
 
 ## 5. 输出、选项与性能纪律
 

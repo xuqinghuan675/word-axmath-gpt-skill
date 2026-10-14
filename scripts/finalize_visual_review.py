@@ -5,7 +5,9 @@ import hashlib
 import json
 from pathlib import Path
 
-VISUAL_REVIEW_SCHEMA = "axmath-visual-review/v1"
+from internal_content_audit import validate_full_internal_audit
+
+VISUAL_REVIEW_SCHEMA = "axmath-visual-review/v2"
 
 
 def _sha256_file(path: Path) -> str:
@@ -23,7 +25,7 @@ def finalize(report_path: Path, review_path: Path) -> dict:
     review = json.loads(review_path.read_text(encoding="utf-8-sig"))
     errors: list[str] = []
 
-    if report.get("schema") != "axmath-strict-final-compare/v2":
+    if report.get("schema") != "axmath-strict-final-compare/v3":
         errors.append("unsupported compare report schema")
     if review.get("schema") != VISUAL_REVIEW_SCHEMA:
         errors.append("unsupported visual review schema")
@@ -38,6 +40,18 @@ def finalize(report_path: Path, review_path: Path) -> dict:
         errors.append("final file missing")
     elif _sha256_file(final) != report.get("final_sha256"):
         errors.append("final file changed after strict compare")
+
+    internal_path = Path(str(report.get("internal_audit") or ""))
+    if not internal_path.is_file():
+        errors.append("complete internal AxMath audit missing")
+    elif _sha256_file(internal_path) != report.get("internal_audit_sha256"):
+        errors.append("internal AxMath audit changed after strict compare")
+    elif final.is_file():
+        internal = validate_full_internal_audit(
+            internal_path, final, int(report.get("final_axmath_count") or 0)
+        )
+        if not internal["passed"] or not report.get("internal_audit_pass"):
+            errors.append("complete internal AxMath audit did not pass")
 
     if review.get("source_sha256") != report.get("source_sha256"):
         errors.append("review source hash does not match compare report")
@@ -86,6 +100,14 @@ def finalize(report_path: Path, review_path: Path) -> dict:
 
     if review.get("overall_passed") is not True:
         errors.append("overall_passed is not true")
+    if review.get("cross_page_content_anchors_passed") is not True or not str(
+        review.get("cross_page_content_anchors_evidence") or ""
+    ).strip():
+        errors.append("cross-page content anchors were not evidenced and passed")
+    if review.get("small_inline_closeups_passed") is not True or not str(
+        review.get("small_inline_closeups_evidence") or ""
+    ).strip():
+        errors.append("small inline formula closeups were not evidenced and passed")
     if not report.get("hard_content_pass"):
         errors.append("hard content gate did not pass")
 

@@ -65,12 +65,20 @@ class LocalCliTests(unittest.TestCase):
         )
         self.assertNotIn("--inspect-only", command)
 
+        reviewed = self.check_launch(
+            ["diagnose", "--source", r"C:\frozen.docx", "--working", r"C:\working.docx",
+             "--outdir", r"C:\review", "--class-e-review", r"C:\class-e.json"],
+            "diagnose_after_conversion.py", ["--class-e-review"],
+        )
+        self.assertIn(str(Path(r"C:\class-e.json").absolute()), reviewed)
+
     def test_final_review_not_automatically_approved(self):
         self.check_launch(
             ["compare", "--source", r"C:\source.docx", "--final", r"C:\candidate.docx",
-             "--outdir", r"C:\strict", "--expected-source-sha256", "a" * 64],
+             "--outdir", r"C:\strict", "--expected-source-sha256", "a" * 64,
+             "--internal-audit", r"C:\internal.json"],
             "strict_final_compare.py",
-            ["--expected-source-sha256", "a" * 64],
+            ["--expected-source-sha256", "a" * 64, "--internal-audit"],
         )
         self.check_launch(
             ["finalize", "--report", r"C:\strict\STRICT_FINAL_COMPARE.json",

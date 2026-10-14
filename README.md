@@ -160,6 +160,8 @@ Word LaTeX 导出也不能因为“非空”就相信。实测出现过 control 
 | Prime 写回硬门 | `axmath_prime_contract.ps1` |
 | M2 / Class E single-object repair | `repair_axmath_from_approved_tex.ps1` |
 | AxMath internal content diagnostic | `inspect_axmath_tex.ps1` |
+| Class E source/export/conclusion ledger | `class_e_review.py` |
+| Complete internal export validator | `internal_content_audit.py` |
 | Low-risk inline Class A | `repair_axmath_inline_roundtrip.ps1` |
 | Class B probe only | `rebuild_axmath_baselines.ps1` |
 | Class C OLE shell | `calibrate_axmath_boxes.py` |
@@ -177,7 +179,7 @@ Phase A 真正耗时主要在 AxMath 宏内部。历史 1335 公式生产跑约 
 - M2 用 source visual line + measured overflow；
 - Class D/E 先辨 internal vs preview;
 - repair iteration 不全页渲染；
-- final 只 full-render 一次。
+- final 只 full-render 一次，并在此之前完成一次全部 AxMath 内部导出审核。
 
 ## 禁止事项
 
@@ -193,10 +195,11 @@ Phase A 真正耗时主要在 AxMath 宏内部。历史 1335 公式生产跑约 
 ## 最终验收
 
 ```powershell
-python scripts\strict_final_compare.py --source "<frozen-source>" --final "<final>" --outdir "<compare>" --expected-source-sha256 "<sha>"
+powershell -File scripts\inspect_axmath_tex.ps1 -InputDocx "<final>" -AllAxMath -OutputJson "<compare>\FINAL_AXMATH_INTERNAL_TEX.json"
+python scripts\strict_final_compare.py --source "<frozen-source>" --final "<final>" --outdir "<compare>" --expected-source-sha256 "<sha>" --internal-audit "<compare>\FINAL_AXMATH_INTERNAL_TEX.json"
 ```
 
-然后必须逐页检查所有 source-vs-final 图片，再：
+完整导出中任何空内容、控制字符、漏检序号或哈希失配都会阻止最终比较。然后必须查看源稿与结果稿**所有页面**，按正文和公式锚点跨页核对；相同页码不保证相同内容，小型行内公式需看清晰局部视图，再：
 
 ```powershell
 python scripts\finalize_visual_review.py --report "<compare>\STRICT_FINAL_COMPARE.json" --review "<compare>\VISUAL_REVIEW.json"

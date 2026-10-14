@@ -55,20 +55,37 @@ Stop mutation. Do not call it M1 unless the frozen structure proves the exact si
 Examples:
 
 - complex source formula became a tiny AxMath shell;
+
+- phone screenshot shows a black block, garbage glyphs, or a one-character inline formula that looks like slashes on desktop;
+
 - double-clicking AxMath shows a short or unrelated formula;
-- AxMath→TeX export is empty or semantically collapsed;
+- AxMath→TeX export is empty, contains control characters, or disagrees with frozen OMML;
+
 - source contains prime/derivative markers and roundtrip is risky.
 
-The source of truth is always the **frozen OfficeMath at the same ordinal**.
-
+First locate the **final candidate's AxMath ordinal** using nearby question/paragraph/formula anchors. Page numbers can move after reflow and are not object identities. When the source-to-final count is exact, match that ordinal to frozen OfficeMath. For a validated M2-B split, use the repair ledger's mapping instead of assuming ordinal equality. The source of truth is the **frozen OfficeMath**, never the damaged AxMath export.
+
+For selected ordinals (at most 24 per invocation), inspect temporary copies of the AxMath OLE and prepare a hash-bound review:
+
+`class_e_review.py` below applies when `formula_count_state=exact` and source/final ordinals are one-to-one. For M2-B, first use the verified split ledger to identify the source formula and the new target object's paragraph/row; do not pass shifted ordinals to this one-to-one helper.
+
+```powershell
+powershell -File scripts\inspect_axmath_tex.ps1 -InputDocx "<working.docx>" -Ordinals "<ordinals>" -OutputJson "<internal-tex.json>"
+python scripts\class_e_review.py prepare --source "<frozen.docx>" --working "<working.docx>" --inspection "<internal-tex.json>" --ordinals "<ordinals>" --out "<class-e-review.json>"
+```
+
+The review records source OMML XML/hash/text, source-derived TeX when available, the actual internal export, source/working/inspection SHA-256, and a manual conclusion. Set each `decision` to `verified_match` or `needs_rebuild`, add specific `evidence`, validate with `python scripts/class_e_review.py validate --source "<frozen.docx>" --working "<working.docx>" --review "<class-e-review.json>"`, then pass it to diagnosis as `--class-e-review`. Empty or control-character exports cannot be approved. A verified short formula such as `\hat a_t` is suppressed only while all three hashes match; a repaired DOCX needs a new export/review.
+
 Production route:
 
 1. Export frozen-source Word LaTeX when useful with `export_source_word_latex.ps1`.
 2. Treat COM success as insufficient. Word can emit non-empty malformed linear math containing control characters, placeholder glyphs such as `▒`, `〖`, `〗`, or broken constructs.
 3. `build_source_tex_map.py` validates Word output and can fall back to **exact source OMML → LaTeX** via `omml2latex`.
 4. GPT reviews the source-derived TeX contract.
-5. Apply only that approved map with `repair_axmath_from_approved_tex.ps1`.
-
+5. Apply only that approved map with `repair_axmath_from_approved_tex.ps1` to a **new DOCX**, then re-export the repaired ordinal and diagnose the new copy. Never edit a shared WMF/preview to repair internal content.
+
+The approved map can use `working_paragraph_index` plus `working_paragraph_axmath_index` for static positioning. The repair script checks `working_axmath_count` against the actual DOCX count before using those locators. If either locator is missing, it builds a global Word AxMath index even when `working_axmath_count` exists, then checks that expected count against the scan. A count field is not a locator; a stale hash or count stops repair before target replacement.
+
 Do not use a damaged AxMath object's own exported TeX as the semantic donor.
 
 Prime/derivative semantics are a **mandatory semantic route, independent of layout**. `formula_geometry_audit.py` reports every frozen-source formula containing `'`, `′`, `″`, `‴`, `⁗` or equivalent prime-like markers in `prime_semantic_candidates`; do not wait for a geometry warning. Before any source-semantic donor is approved, run `normalize_axmath_tex.py`. The AxMath 2.7.0.58 contract has been verified both from its parser-token table and real Word+AxMath round trips: **first derivative = `\prime`, second = `''`, third = `'''`**. Examples: `F′(x) → F\prime(x)`, `F″(x) → F''(x)`, `F‴(ξ) → F'''(ξ)`, `y′² → {y\prime}^{2}`. Raw Unicode `‴` is source evidence only: direct `AMSTeX2AM` input round-trips as `?` on this version. `repair_axmath_from_approved_tex.ps1`, M1 repair, and M2-B visual-line repair all hard-reject noncanonical prime literals and re-export prime-bearing donors through real AxMath before writing them into the working DOCX.
@@ -191,8 +208,14 @@ Decision:
 
 Do not overwrite shared WMF/preview relationships unless every object sharing that media is proven semantically identical.
 
-## 6. Word/COM stability rules learned from production failures
-
+### Final internal-content gate and cross-page visual comparison
+
+After repair and diagnosis, make **one complete read-only internal export** from the final candidate with `inspect_axmath_tex.ps1 -AllAxMath`. `strict_final_compare.py --internal-audit <JSON>` rejects missing or duplicate ordinals, stale hashes, failed/empty/control-character exports, and count mismatches before rendering. This catches an AxMath OLE whose editable content is empty even when the number of OLE objects is correct. A non-empty export still does not prove semantic equivalence; suspicious formulas require frozen-OMML Class E review.
+
+The source and final may paginate differently (the black-block incident had 19 source pages and 21 final pages). Side-by-side page *N* panels aid viewing but do not establish content correspondence. Inspect every page of each document; track matching content by question number, nearby text, or formula ordinal across page boundaries. Enlarge or crop small inline formulas until their glyphs are readable, and record both cross-page anchors and closeup evidence in the final visual review.
+
+## 6. Word/COM stability rules learned from production failures
+
 These are mandatory:
 
 - Use `$wordPid`, never `$PID`; PowerShell variable names are case-insensitive and `$PID` is reserved.

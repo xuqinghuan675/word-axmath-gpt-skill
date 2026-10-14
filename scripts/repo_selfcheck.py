@@ -48,6 +48,10 @@ def main() -> int:
         "export_source_visual_lines.ps1",
         "repair_multisibling_groups.ps1",
         "inspect_axmath_tex.ps1",
+        "word_pid_contract.ps1",
+        "internal_content_audit.py",
+        "class_e_review.py",
+        "test_internal_content_gate.py",
         "repair_axmath_from_approved_tex.ps1",
         "strict_final_compare.py",
         "finalize_visual_review.py",
@@ -638,6 +642,8 @@ def main() -> int:
         strict,
         [
             "hard_content_pass",
+            "internal_audit_pass",
+            "validate_full_internal_audit",
             "VISUAL_REVIEW_TEMPLATE.json",
             "expected-source-sha256",
             'snapshot(source_docx, outdir / "source", "source")',
@@ -650,7 +656,9 @@ def main() -> int:
         errors.append("strict_final_compare.py still treats structural_pass as final acceptance")
     require(
         finalizer,
-        ["acceptance_pass", "image_sha256", "source_sha256", "final_sha256"],
+        ["acceptance_pass", "image_sha256", "source_sha256", "final_sha256",
+         "validate_full_internal_audit", "cross_page_content_anchors_passed",
+         "small_inline_closeups_passed"],
         "finalize_visual_review.py",
         errors,
     )

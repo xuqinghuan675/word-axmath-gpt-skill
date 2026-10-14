@@ -8,12 +8,14 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 from audit_docx import compare as audit_docx_compare
+from build_source_tex_map import static_axmath_inventory
+from internal_content_audit import validate_full_internal_audit
 from restore_word_page_layout import page_style_report
 from snapshot_docx import snapshot
 
 
 CENTER_ALIGNMENT = 1  # Word WdParagraphAlignment.wdAlignParagraphCenter
-VISUAL_REVIEW_SCHEMA = "axmath-visual-review/v1"
+VISUAL_REVIEW_SCHEMA = "axmath-visual-review/v2"
 
 
 def _sha256_file(path: Path) -> str:
@@ -58,11 +60,12 @@ def _build_side_by_side(source_pages: list[dict], final_pages: list[dict], outdi
             continue
         panel_w = max(widths)
         panel_h = max(heights)
-        header_h = 36
+        header_h = 54
         sheet = Image.new("RGB", (panel_w * 2 + 24, panel_h + header_h), "white")
         draw = ImageDraw.Draw(sheet)
         draw.text((8, 10), f"SOURCE page {page_no}", fill="black")
         draw.text((panel_w + 20, 10), f"FINAL page {page_no}", fill="black")
+        draw.text((8, 31), "Match content anchors across pages; page numbers are not content pairs.", fill="black")
         if src is not None:
             sheet.paste(src, (0, header_h))
         if fin is not None:
@@ -86,6 +89,10 @@ def _write_visual_review_template(report: dict, outdir: Path) -> Path:
         "source_sha256": report["source_sha256"],
         "final_sha256": report["final_sha256"],
         "overall_passed": None,
+        "cross_page_content_anchors_passed": None,
+        "cross_page_content_anchors_evidence": "",
+        "small_inline_closeups_passed": None,
+        "small_inline_closeups_evidence": "",
         "reviewer": "",
         "notes": "",
         "pages": [
@@ -112,6 +119,7 @@ def compare(
     center_tolerance_pt: float = 3.0,
     repair_ledger: Path | None = None,
     numbering_scope: str = "line-start",
+    internal_audit: Path | None = None,
 ) -> dict:
     source_docx = source_docx.resolve()
     final_docx = final_docx.resolve()
@@ -123,10 +131,25 @@ def compare(
         raise FileNotFoundError(source_docx)
     if not final_docx.is_file():
         raise FileNotFoundError(final_docx)
+    if internal_audit is None:
+        raise ValueError(
+            "A complete -AllAxMath internal export audit is required before final compare. "
+            "Pass its JSON using --internal-audit."
+        )
 
     outdir.mkdir(parents=True, exist_ok=True)
     source_sha_before = _sha256_file(source_docx)
     final_sha_before = _sha256_file(final_docx)
+    internal_audit = internal_audit.resolve()
+    expected_internal_count = static_axmath_inventory(final_docx)["axmath_count"]
+    internal_state = validate_full_internal_audit(
+        internal_audit, final_docx, expected_internal_count
+    )
+    if not internal_state["passed"]:
+        raise ValueError(
+            "Final internal AxMath audit failed: " + "; ".join(internal_state["errors"])
+            + f". Inspect {internal_audit} for affected ordinals."
+        )
 
     source_snapshot = snapshot(source_docx, outdir / "source", "source")
     final_snapshot = snapshot(final_docx, outdir / "final", "final")
@@ -165,7 +188,7 @@ def compare(
     final_omath = final_snapshot.get("inventory", {}).get("omath", [])
 
     report = {
-        "schema": "axmath-strict-final-compare/v2",
+        "schema": "axmath-strict-final-compare/v3",
         "source": str(source_docx),
         "final": str(final_docx),
         "source_sha256": source_sha_before,
@@ -180,6 +203,9 @@ def compare(
         "final_pages": len(final_snapshot.get("pages", [])),
         "source_formula_count": len(source_formulas),
         "final_axmath_count": len(final_formulas),
+        "internal_audit": str(internal_audit),
+        "internal_audit_sha256": internal_state["audit_sha256"],
+        "internal_audit_pass": internal_state["passed"] and len(final_formulas) == expected_internal_count,
         "final_omath_count": len(final_omath),
         "source_non_axmath_ole_count": content_audit["source_non_axmath_ole_count"],
         "final_non_axmath_ole_count": content_audit["candidate_non_axmath_ole_count"],
@@ -319,6 +345,7 @@ def compare(
         and report["source_stable_during_compare"]
         and report["final_stable_during_compare"]
         and report["formula_count_contract_ok"]
+        and report["internal_audit_pass"]
         and report["final_omath_count"] == 0
         and report["source_non_axmath_ole_count"] == 0
         and report["final_non_axmath_ole_count"] == 0
@@ -335,10 +362,10 @@ def compare(
         "awaiting_visual_review" if report["hard_content_pass"] else "hard_content_failed"
     )
     report["acceptance_instruction"] = (
-        "Inspect every side-by-side page image. Fill VISUAL_REVIEW_TEMPLATE.json only from direct "
-        "visual inspection, save it as a review manifest, then run finalize_visual_review.py. "
-        "Geometry/centering diagnostics are triage warnings; hard content gates and per-page visual "
-        "review are the acceptance authority."
+        "Inspect every source and final page. Equal page numbers are not content pairs when formulas "
+        "reflow; match paragraphs and formula ordinals across pages using content anchors. Zoom/crop "
+        "small inline formulas until the glyphs are legible, then record the anchor and closeup evidence "
+        "in VISUAL_REVIEW_TEMPLATE.json. Finalize only after every page is directly reviewed."
     )
 
     template_path = _write_visual_review_template(report, outdir)
@@ -355,6 +382,7 @@ def main() -> int:
     ap.add_argument("--final", required=True)
     ap.add_argument("--outdir", required=True)
     ap.add_argument("--expected-source-sha256", required=True)
+    ap.add_argument("--internal-audit", required=True, help="Complete hash-bound -AllAxMath export from inspect_axmath_tex.ps1.")
     ap.add_argument("--center-tolerance-pt", type=float, default=3.0)
     ap.add_argument(
         "--repair-ledger",
@@ -371,6 +399,7 @@ def main() -> int:
         args.center_tolerance_pt,
         Path(args.repair_ledger) if args.repair_ledger else None,
         args.numbering_scope,
+        Path(args.internal_audit),
     )
     print(json.dumps({
         "hard_content_pass": report["hard_content_pass"],
@@ -381,6 +410,7 @@ def main() -> int:
         "nonmath_text_contract_ok": report["nonmath_text_contract_ok"],
         "repair_ledger_ok": report["repair_ledger_ok"],
         "final_omath_count": report["final_omath_count"],
+        "internal_audit_pass": report["internal_audit_pass"],
         "final_non_axmath_ole_count": report["final_non_axmath_ole_count"],
         "final_nonmain_omath_count": report["final_nonmain_omath_count"],
         "paragraph_count_equal": report["paragraph_count_equal"],

@@ -10,6 +10,9 @@ $ErrorActionPreference='Stop'
 $PrimeContractScript=Join-Path $PSScriptRoot 'axmath_prime_contract.ps1'
 if(-not(Test-Path -LiteralPath $PrimeContractScript)){throw 'axmath_prime_contract.ps1 missing'}
 . $PrimeContractScript
+$WordPidContractScript=Join-Path $PSScriptRoot 'word_pid_contract.ps1'
+if(-not(Test-Path -LiteralPath $WordPidContractScript)){throw 'word_pid_contract.ps1 missing'}
+. $WordPidContractScript
 
 function Get-SharedSha256 {
   param([Parameter(Mandatory=$true)][string]$Path)
@@ -55,6 +58,24 @@ function Get-AxMathShapes($d){
     try{if([string]$s.OLEFormat.ProgID -eq 'Equation.AxMath'){$arr += $s}}catch{}
   }
   return $arr
+}
+
+function Get-StaticAxMathCount {
+  param([Parameter(Mandatory=$true)][string]$Path)
+  $archive=$null;$stream=$null
+  try{
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive=[IO.Compression.ZipFile]::OpenRead($Path)
+    $entry=$archive.GetEntry('word/document.xml')
+    if($null -eq $entry){throw 'DOCX has no word/document.xml'}
+    $stream=$entry.Open()
+    $xml=New-Object Xml.XmlDocument
+    $xml.Load($stream)
+    return [int]$xml.SelectNodes("//*[local-name()='OLEObject' and @ProgID='Equation.AxMath']").Count
+  }finally{
+    if($stream){$stream.Dispose()}
+    if($archive){$archive.Dispose()}
+  }
 }
 
 function Get-MapTargetAxMath {
@@ -142,7 +163,7 @@ $result=[ordered]@{
   failed=@()
   success=$false
 }
-$word=$null;$doc=$null;$wordPid=$null;$owned=$false
+$word=$null;$doc=$null;$wordPid=$null;$wordIdentity=$null;$owned=$false
 
 try{
   if(Test-Path -LiteralPath $OutputFull){Remove-Item -LiteralPath $OutputFull -Force}
@@ -151,16 +172,16 @@ try{
   $result.output_readonly_cleared=[bool]$outputItem.IsReadOnly
   if($outputItem.IsReadOnly){$outputItem.IsReadOnly=$false}
 
+  $launchStartedAt=Get-Date
   $word=New-Object -ComObject Word.Application
   Start-Sleep -Milliseconds 300
-  $newWord=@(Get-Process WINWORD -ErrorAction SilentlyContinue|Where-Object{$beforeWord -notcontains $_.Id}|Select-Object -ExpandProperty Id)
-  if($newWord.Count -eq 1){
-    $wordPid=[int]$newWord[0]
-    $owned=$true
-    $result.word_pid=$wordPid
-    $result.word_pid_owned=$true
-  }
-  if(-not $owned){throw 'Could not establish a distinct task-owned Word process; pre-existing user Word processes were left untouched.'}
+  $wordIdentity=Resolve-OwnedWordIdentity -Word $word -BeforePids $beforeWord -LaunchStartedAt $launchStartedAt
+  $wordPid=[int]$wordIdentity.pid
+  $owned=$true
+  $result.word_pid=$wordPid
+  $result.word_pid_owned=$true
+  $result.word_pid_created_at=$wordIdentity.started_at
+  $result.word_pid_ownership_proof=$wordIdentity.proof
 
   $word.Visible=$false
   $word.DisplayAlerts=0
@@ -191,16 +212,23 @@ try{
   }
 
   $fallbackAx=$null
-  if($mapMeta -and $mapMeta.working_axmath_count){
-    $result.axmath_before=[int]$mapMeta.working_axmath_count
-  }elseif($allRowsHaveStaticLocator){
-    throw 'Located approved map is missing working_axmath_count.'
+  $hasExpectedCount=($mapMeta -and ($mapMeta.PSObject.Properties.Name -contains 'working_axmath_count'))
+  if($allRowsHaveStaticLocator){
+    if(-not $hasExpectedCount){throw 'Located approved map is missing working_axmath_count.'}
+    # Static locators avoid a full Word COM enumeration. Validate the map's
+    # expected count against the actual input DOCX, never accept it on trust.
+    $result.axmath_before=Get-StaticAxMathCount $InputFull
+    $result.locator_mode='static_paragraph_local'
   }else{
-    # Legacy maps pay one O(N) COM scan. Production maps should carry static
-    # paragraph/local locators so no whole-document COM scan is needed.
+    # A missing paragraph/local locator ALWAYS requires an actual global Word
+    # AxMath index, even when the map supplies working_axmath_count.
     $fallbackAx=@(Get-AxMathShapes $doc)
     $result.axmath_before=$fallbackAx.Count
+    $result.locator_mode='global_fallback'
     $result.legacy_global_axmath_scan=$true
+  }
+  if($hasExpectedCount -and $result.axmath_before -ne [int]$mapMeta.working_axmath_count){
+    throw "Stale approved map: actual AxMath count $($result.axmath_before) != working_axmath_count $($mapMeta.working_axmath_count)."
   }
 
   foreach($row in @($rows|Sort-Object{[int]$_.ordinal} -Descending)){
@@ -292,13 +320,15 @@ try{
   $result.hresult=$_.Exception.HResult
 }finally{
   if($doc -ne $null){try{$doc.Close($false)}catch{}}
-  if($word -ne $null -and $owned){try{$word.Quit()}catch{$result.word_quit_error=$_.Exception.Message}}
+  if($word -ne $null -and $owned -and (Test-OwnedWordIdentity $wordIdentity)){
+    try{$word.Quit()}catch{$result.word_quit_error=$_.Exception.Message}
+  }
   $doc=$null;$word=$null;$fallbackAx=$null;$afterLegacy=$null;$target=$null;$donorAx=$null;$donor=$null;$replacement=$null;$primeCheck=$null
   [GC]::Collect();[GC]::WaitForPendingFinalizers();[GC]::Collect()
   if($wordPid -and $owned){
     $deadline=(Get-Date).AddSeconds(6)
-    while((Get-Date)-lt $deadline -and (Get-Process -Id $wordPid -ErrorAction SilentlyContinue)){Start-Sleep -Milliseconds 200}
-    if(Get-Process -Id $wordPid -ErrorAction SilentlyContinue){
+    while((Get-Date)-lt $deadline -and (Test-OwnedWordIdentity $wordIdentity)){Start-Sleep -Milliseconds 200}
+    if(Test-OwnedWordIdentity $wordIdentity){
       Stop-Process -Id $wordPid -Force -ErrorAction SilentlyContinue
       $result.forced_owned_word_cleanup=$true
     }
