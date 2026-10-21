@@ -2,6 +2,8 @@
 
 把 Microsoft Word 原生 OfficeMath / OMML 批量转换为真实可编辑的 `Equation.AxMath`，并使用冻结源稿、确定性故障分类和逐页视觉验收完成生产级收口。
 
+**开源许可：** [MIT](LICENSE)（只覆盖本仓库的自有代码，不授权 Word / AxMath 商业软件）。[贡献指南](CONTRIBUTING.md) · [安全说明](SECURITY.md) · [变更记录](CHANGELOG.md) · [维护与验证证据](docs/MAINTAINERS.md)。真正运行转换需要另行取得并合法安装 Microsoft Word 与 AxMath；CI 静态测试不能替代逐页人工视觉验收。
+
 ## 最重要的一句话
 
 **不要转换完就开始猜。必须先读 `SKILL.md`，然后运行 `diagnose_after_conversion.py`，按 `NEXT_ACTION.json` 的 repair class 走。**
