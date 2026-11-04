@@ -1,6 +1,6 @@
 ---
 name: word-axmath-conversion
-description: Convert Microsoft Word OfficeMath to genuine editable AxMath, with frozen-source safety, targeted repairs and strict visual acceptance.
+description: Arrange high-school mathematics handouts, workbooks and question sets in Word or WPS, and convert Microsoft Word OfficeMath to genuine editable AxMath with frozen-source safety and strict visual acceptance.
 ---
 
 # Word → AxMath Skill · 主流程（精简版）
@@ -13,11 +13,11 @@ description: Convert Microsoft Word OfficeMath to genuine editable AxMath, with 
 
 **A new chat must read this file** before editing or converting any Word / OfficeMath / AxMath document. This file is authoritative after the user's current instruction. Detailed exceptional repair contracts are in `docs/REPAIR_REFERENCE.md`, loaded **only** when the diagnostic class requires them.
 
-**唯一主链：原稿冻结 → 官方 AxMath 转换 → 快速诊断 → 必要时定向修复 → 唯一一次最终完整逐页视觉验收。**
+**需要转换为 AxMath 时的唯一主链：原稿冻结 → 官方 AxMath 转换 → 快速诊断 → 必要时定向修复 → 唯一一次最终完整逐页视觉验收。**
 
 ## 高中数学资料排版联动
 
-当任务还包含高中数学讲义、练习册或题目文档的排版时，如果当前环境已安装 `math-document-layout` 技能，则读取并执行其 `SKILL.md`；否则遵循用户指定的排版要求。排版涉及小节、例题和课后练习编号、配图、公式与留白；纯公式转换不额外改动这些结构。需要同时排版和转换时，可先在副本上完成排版和公式准备，再把该工作稿作为本技能冻结和转换的输入；另对照原始资料核实题文、编号映射和配图，最终转换验收以冻结后的排版稿为对照。未要求转换时，不因排版联动而启动 AxMath 转换。
+当任务包含高中数学讲义、练习册或题目文档排版时，读取并执行本仓库的 [数学资料排版工作流](docs/MATH_LAYOUT_REFERENCE.md)，包括仅排版的任务；用户本次提出的具体要求优先。纯公式转换不额外改动小节、题目顺序或留白；未要求转换时，不因排版而启动 AxMath 转换。需要同时排版和转换时，可先在副本上完成排版和公式准备，再把该工作稿作为本技能冻结和转换的输入；另对照原始资料核实题文、编号映射和配图，最终转换验收以冻结后的排版稿为对照。
 
 ### 永久安全约束
 
