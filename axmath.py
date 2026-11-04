@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -46,6 +47,28 @@ def local_path(value: str) -> str:
     return str(Path(value).expanduser().absolute())
 
 
+def positive_int(value: str) -> int:
+    """Require a useful positive count before invoking any conversion helper."""
+    try:
+        count = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("expected a positive integer") from exc
+    if count < 1:
+        raise argparse.ArgumentTypeError("expected a positive integer")
+    return count
+
+
+def nonnegative_finite_float(value: str) -> float:
+    """Reject nonsensical negative/NaN/Inf layout tolerances early."""
+    try:
+        result = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("expected a nonnegative finite number") from exc
+    if not math.isfinite(result) or result < 0:
+        raise argparse.ArgumentTypeError("expected a nonnegative finite number")
+    return result
+
+
 def add_numbering_option(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--numbering-scope", choices=("line-start", "anywhere"),
@@ -74,7 +97,7 @@ def make_parser() -> argparse.ArgumentParser:
     cache_prepare = commands.add_parser("cache-prepare", help="Freeze and prepare repeated formulas for one official conversion each.")
     cache_prepare.add_argument("--input", required=True)
     cache_prepare.add_argument("--outdir", required=True)
-    cache_prepare.add_argument("--min-duplicates", type=int, default=64)
+    cache_prepare.add_argument("--min-duplicates", type=positive_int, default=64)
 
     cache_restore = commands.add_parser("cache-restore", help="Restore genuine AxMath OLE after official conversion of the prepared DOCX.")
     cache_restore.add_argument("--manifest", required=True)
@@ -104,7 +127,7 @@ def make_parser() -> argparse.ArgumentParser:
     compare.add_argument("--expected-source-sha256", required=True)
     compare.add_argument("--internal-audit", required=True, help="Complete -AllAxMath internal export JSON.")
     compare.add_argument("--repair-ledger", help="Validated ledger for explicitly approved M2-B line splitting.")
-    compare.add_argument("--center-tolerance-pt", type=float, help="Normally do not override the original default.")
+    compare.add_argument("--center-tolerance-pt", type=nonnegative_finite_float, help="Normally do not override the original default.")
     add_numbering_option(compare)
 
     finalize = commands.add_parser("finalize", help="Validate manually reviewed pages; does not auto-approve.")

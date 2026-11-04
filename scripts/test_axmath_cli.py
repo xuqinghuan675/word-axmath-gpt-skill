@@ -16,6 +16,34 @@ import axmath
 
 
 class LocalCliTests(unittest.TestCase):
+    def test_cache_prepare_rejects_nonpositive_duplicate_threshold(self):
+        base = ["cache-prepare", "--input", "source.docx", "--outdir", "prepared"]
+        for value in ("0", "-2", "not-an-integer"):
+            with self.subTest(value=value), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as error:
+                    axmath.make_parser().parse_args(base + ["--min-duplicates", value])
+                self.assertEqual(error.exception.code, 2)
+        self.assertEqual(
+            axmath.make_parser().parse_args(base + ["--min-duplicates", "1"]).min_duplicates,
+            1,
+        )
+
+    def test_compare_rejects_invalid_layout_tolerance(self):
+        base = [
+            "compare", "--source", "source.docx", "--final", "final.docx",
+            "--outdir", "review", "--expected-source-sha256", "a" * 64,
+            "--internal-audit", "audit.json",
+        ]
+        for value in ("-0.1", "nan", "inf", "-inf", "invalid"):
+            with self.subTest(value=value), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as error:
+                    axmath.make_parser().parse_args(base + ["--center-tolerance-pt", value])
+                self.assertEqual(error.exception.code, 2)
+        self.assertEqual(
+            axmath.make_parser().parse_args(base + ["--center-tolerance-pt", "0"]).center_tolerance_pt,
+            0.0,
+        )
+
     def check_launch(self, argv, script, expected_tokens=()):
         with patch("axmath.subprocess.run") as runner:
             runner.return_value.returncode = 0
