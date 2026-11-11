@@ -71,9 +71,9 @@ def nonnegative_finite_float(value: str) -> float:
 
 def add_numbering_option(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--numbering-scope", choices=("line-start", "anywhere"),
-        default="line-start",
-        help="Keep line-start unless the user explicitly approved anywhere.",
+        "--numbering-scope", choices=("preserve", "line-start", "anywhere"),
+        default="preserve",
+        help="Preserve source numbering punctuation by default; other scopes change text.",
     )
 
 

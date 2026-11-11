@@ -28,7 +28,7 @@ _NUMBERING_DUNHAO_RE = re.compile(
 _ANYWHERE_NUMBERING_RE = re.compile(
     r"(?<![0-9０-９])(?:[0-9０-９]+|[（(][0-9０-９]+[)）])、"
 )
-SCOPES = ("line-start", "anywhere")
+SCOPES = ("preserve", "line-start", "anywhere")
 
 
 def sha256_file(path: Path) -> str:
@@ -43,6 +43,8 @@ def numbering_dunhao_positions(text: str, *, scope: str = "line-start") -> list[
     """Return character offsets of label-final Chinese dunhao characters."""
     if scope not in SCOPES:
         raise ValueError(f"Unsupported numbering scope: {scope}")
+    if scope == "preserve":
+        return []
     pattern = _NUMBERING_DUNHAO_RE if scope == "line-start" else _ANYWHERE_NUMBERING_RE
     return [match.end() - 1 for match in pattern.finditer(text or "")]
 
@@ -197,7 +199,8 @@ def normalize_docx(input_docx: Path, output_docx: Path, *, scope: str = "line-st
             "anywhere is deliberately aggressive: 第1、2项 also becomes 第1.2项"
             if scope == "anywhere" else None
         ),
-        "rule": "paragraph-or-line-start Arabic-number label: 、 -> .",
+        "rule": ("preserve all numbering punctuation" if scope == "preserve"
+                 else "paragraph-or-line-start Arabic-number label: 、 -> ."),
         "supports": ["1、", "12、", "（1）、", "(1)、", "fullwidth Arabic digits"],
         "structure_before": before,
         "structure_after": after,

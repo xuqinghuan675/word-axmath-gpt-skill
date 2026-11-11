@@ -4,7 +4,7 @@ This is exception-only operational detail extracted verbatim from the 2026-10-08
 
 ## Legacy OLE handling
 
-For `Equation.3`, `Equation.DSMT4`, MathType variants, or unknown OLE, use `embedded_object_inventory.py` to locate the story, paragraph and ProgID. Preserve the original source and hash. Review each object and rebuild verified mathematical content as editable OfficeMath on a separate DOCX, then inspect the new copy before starting AxMath conversion. Do not automatically confirm the Word conversion dialog for all formulas. Verify prime orders and indices manually; unknown OLE is not necessarily a formula. Keep the mapping and both source versions.
+For `Equation.3`, `Equation.DSMT4`, MathType variants, or unknown OLE, use `embedded_object_inventory.py` to locate the story, paragraph and ProgID. Preserve the original source and hash. If the user permits OfficeMath, review each object and rebuild verified mathematical content as editable OfficeMath on a separate DOCX, then inspect it before conversion. If the user forbids Equation/OfficeMath, do not use that rebuilding route; follow the AxMath-only boundary in `SKILL.md` and report any unresolved objects. Do not automatically confirm the Word conversion dialog for all formulas. Verify prime orders and indices manually; unknown OLE is not necessarily a formula. Keep the mapping and both source versions.
 
 ## 4. Formula count is a state machine, not a yes/no check
 
@@ -210,6 +210,8 @@ Do not overwrite shared WMF/preview relationships unless every object sharing th
 
 ### Final internal-content gate and cross-page visual comparison
 
+`strict_final_compare.py` creates temporary PDFs; when the user wants Word only or forbids PDF, follow the Word-only inspection branch in `SKILL.md` instead and do not claim the PDF-based gate passed.
+
 After repair and diagnosis, make **one complete read-only internal export** from the final candidate with `inspect_axmath_tex.ps1 -AllAxMath`. `strict_final_compare.py --internal-audit <JSON>` rejects missing or duplicate ordinals, stale hashes, failed/empty/control-character exports, and count mismatches before rendering. This catches an AxMath OLE whose editable content is empty even when the number of OLE objects is correct. A non-empty export still does not prove semantic equivalence; suspicious formulas require frozen-OMML Class E review.
 
 The source and final may paginate differently (the black-block incident had 19 source pages and 21 final pages). Side-by-side page *N* panels aid viewing but do not establish content correspondence. Inspect every page of each document; track matching content by question number, nearby text, or formula ordinal across page boundaries. Enlarge or crop small inline formulas until their glyphs are readable, and record both cross-page anchors and closeup evidence in the final visual review.
@@ -311,7 +313,7 @@ Resume a previous incomplete, single-document run (use the original input
 path and the existing run directory):
 
 ```powershell
-python scripts\one_click_convert.py --input "<original-source.docx>" --resume-run "<existing-run-YYYYMMDD-HHMMSS>" --numbering-scope line-start
+python scripts\one_click_convert.py --input "<original-source.docx>" --resume-run "<existing-run-YYYYMMDD-HHMMSS>" --numbering-scope preserve
 ```
 
 Or continue only the saved conversion working copy:
@@ -351,7 +353,9 @@ mismatches even if the formula count and non-math text match.
 
 ### Optional punctuation scope
 
-The safe default remains `--numbering-scope line-start`. If explicitly
+The default is now `--numbering-scope preserve`, which leaves punctuation
+unchanged and audits it exactly. Select `line-start` only when its changes to
+both main and parenthesized subquestion labels are wanted. If explicitly
 requested, `--numbering-scope anywhere` changes every literal Arabic digit
 or parenthesized Arabic-number label immediately followed by `、`, even
 mid-paragraph; this intentionally also changes `第1、2项` to `第1.2项`.

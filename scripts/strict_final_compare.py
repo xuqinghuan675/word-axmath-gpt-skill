@@ -118,7 +118,7 @@ def compare(
     expected_source_sha256: str,
     center_tolerance_pt: float = 3.0,
     repair_ledger: Path | None = None,
-    numbering_scope: str = "line-start",
+    numbering_scope: str = "preserve",
     internal_audit: Path | None = None,
 ) -> dict:
     source_docx = source_docx.resolve()
@@ -388,7 +388,7 @@ def main() -> int:
         "--repair-ledger",
         help="Validated axmath-local-layout-repair-ledger/v1 for intentional visual-line splits.",
     )
-    ap.add_argument("--numbering-scope", choices=("line-start", "anywhere"), default="line-start")
+    ap.add_argument("--numbering-scope", choices=("preserve", "line-start", "anywhere"), default="preserve")
     args = ap.parse_args()
 
     report = compare(

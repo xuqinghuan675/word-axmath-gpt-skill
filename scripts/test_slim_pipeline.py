@@ -37,13 +37,13 @@ def make_docx(path: Path, *, label: str, formula: str = "x+y", converted: bool =
         z.writestr("word/document.xml", xml.encode("utf-8"))
 
 
-def simulate_conversion(label: str, formula: str = "x+y"):
+def simulate_conversion(label: str, formula: str = "x+y", audit_scope: str = "preserve"):
     def run(cmd, **_kwargs):
         assert "--quiet" in cmd
         input_path = Path(cmd[cmd.index("--input") + 1])
         output_path = Path(cmd[cmd.index("--output") + 1])
         make_docx(output_path, label=label, formula=formula, converted=True)
-        analysis = compare(input_path, output_path)
+        analysis = compare(input_path, output_path, numbering_scope=audit_scope)
         assert analysis["formula_count_state"]["state"] == "exact"
         report = {
             "returncode": 0,
@@ -82,7 +82,7 @@ def test_happy_path(folder: Path):
         report = one_click_convert.run_conversion(src, run_dir)
     assert report["status"] == "converted_ready_for_gpt_review"
     assert report["working_docx"] == report["conversion_working_docx"]
-    assert report["numbering_punctuation_normalization"]["skipped_no_matching_labels"]
+    assert report["numbering_punctuation_normalization"]["skipped_by_preserve_policy"]
     assert not (run_dir / "logs").exists()
     assert len(list((run_dir / "working").glob("*.docx"))) == 1
     assert report["conversion_log"] is None
@@ -112,6 +112,55 @@ def test_numbered_case(folder: Path, label: str, scope: str, expected_text: str)
     assert report["working_docx"] != report["conversion_working_docx"]
     with zipfile.ZipFile(report["working_docx"]) as z:
         assert expected_text in z.read("word/document.xml").decode("utf-8")
+
+
+def test_preserve_numbering_contract(folder: Path):
+    label = "（1）、保留原小问编号"
+    source = folder / "preserve.docx"
+    make_docx(source, label=label)
+    with mock.patch.object(one_click_convert.subprocess, "run", side_effect=simulate_conversion(label)):
+        report = one_click_convert.run_conversion(source, folder / "preserve-run")
+    assert report["status"] == "converted_ready_for_gpt_review"
+    assert report["numbering_scope"] == "preserve"
+    assert report["working_docx"] == report["conversion_working_docx"]
+    assert report["numbering_punctuation_normalization"]["skipped_by_preserve_policy"]
+    assert compare(Path(report["frozen_source"]), Path(report["working_docx"]), numbering_scope="preserve")["nonmath_text_contract_exact"]
+
+    # Simulate a child reporting success under its default, more permissive
+    # audit while its output has changed a subquestion label. Preserve must
+    # perform its own comparison and reject that result.
+    with mock.patch.object(one_click_convert.subprocess, "run", side_effect=simulate_conversion("（1）.保留原小问编号", audit_scope="line-start")):
+        drift = one_click_convert.run_conversion(source, folder / "preserve-drift-run", numbering_scope="preserve")
+    assert drift["status"] == "conversion_failed"
+    assert not drift["nonmath_text_contract_exact"]
+
+
+def test_resume_rejects_changed_numbering_policy(folder: Path):
+    source = folder / "resume-source.docx"
+    make_docx(source, label="（1）、原题")
+    run_dir = folder / "resume-policy-run"
+    run_dir.mkdir()
+    state = {
+        "numbering_scope": "preserve",
+        "documents": [{"source": str(source.resolve()), "sha256": one_click_convert.sha256_file(source)}],
+    }
+    (run_dir / "SOURCE_STATE.json").write_text(json.dumps(state), encoding="utf-8")
+    args = ["one_click_convert.py", "--input", str(source), "--resume-run", str(run_dir),
+            "--numbering-scope", "line-start"]
+    with (
+        mock.patch.object(sys, "argv", args),
+        mock.patch.object(one_click_convert, "discover_docs", return_value=[source]),
+        mock.patch.object(one_click_convert, "inspect_source", return_value={"source": str(source), "state": "ready_officemath"}),
+        mock.patch.object(one_click_convert, "environment_preflight", return_value={"ready_for_end_to_end": True}),
+        mock.patch.object(one_click_convert, "word_pids", return_value=[]),
+        mock.patch.object(one_click_convert, "run_conversion", side_effect=AssertionError("must not resume")),
+    ):
+        try:
+            one_click_convert.main()
+        except RuntimeError as error:
+            assert "numbering policy differs" in str(error)
+        else:
+            raise AssertionError("Changed policy was accepted on resume")
 
 
 def test_failure_preserves_diagnostics(folder: Path):
@@ -151,6 +200,8 @@ def main():
         test_happy_path(root)
         test_numbered_case(root, "1、编号", "line-start", "1.编号")
         test_numbered_case(root, "第1、2项", "anywhere", "第1.2项")
+        test_preserve_numbering_contract(root)
+        test_resume_rejects_changed_numbering_policy(root)
         test_failure_preserves_diagnostics(root)
         test_semantic_risks(root)
     print("SLIM_PIPELINE_REGRESSION_OK")

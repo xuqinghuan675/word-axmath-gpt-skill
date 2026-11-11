@@ -181,7 +181,7 @@ def write_json(path: Path, value: dict) -> None:
     )
 
 
-def run_conversion(source: Path, doc_dir: Path, *, resume: bool = False, numbering_scope: str = "line-start") -> dict:
+def run_conversion(source: Path, doc_dir: Path, *, resume: bool = False, numbering_scope: str = "preserve") -> dict:
     source_sha_before = sha256_file(source)
     source_dir = doc_dir / "source"
     working_dir = doc_dir / "working"
@@ -256,7 +256,7 @@ def run_conversion(source: Path, doc_dir: Path, *, resume: bool = False, numberi
         raw_audit = skill_report.get("audit")
     source_stats = raw_audit["source"] if isinstance(raw_audit, dict) else analyze(frozen_source)
 
-    if numbering_scope == "line-start" and raw_audit:
+    if raw_audit and raw_audit.get("numbering_scope") == numbering_scope:
         expected_replacements = int(raw_audit.get("numbering_punctuation_expected_change_count") or 0)
     else:
         if "plain_contract" not in source_stats:
@@ -279,12 +279,15 @@ def run_conversion(source: Path, doc_dir: Path, *, resume: bool = False, numberi
                 "schema": "axmath-numbering-punctuation-normalization/v1",
                 "scope": numbering_scope,
                 "replacements": 0,
-                "skipped_no_matching_labels": True,
+                "skipped_no_matching_labels": numbering_scope != "preserve",
+                "skipped_by_preserve_policy": numbering_scope == "preserve",
                 "input": str(conversion_working),
                 "output": str(conversion_working),
             }
 
-    if raw_audit and working == conversion_working:
+    # Reuse only an audit of the same policy. A more permissive child audit
+    # must never let changed punctuation pass a preserve run.
+    if raw_audit and working == conversion_working and raw_audit.get("numbering_scope") == numbering_scope:
         candidate_stats = raw_audit["candidate"]
         audit = raw_audit
     else:
@@ -395,7 +398,7 @@ def main() -> int:
     )
     ap.add_argument("--inspect-only", action="store_true")
     ap.add_argument("--resume-run", help="Existing run-YYYYMMDD-HHMMSS workspace to resume, never a new conversion")
-    ap.add_argument("--numbering-scope", choices=("line-start", "anywhere"), default="line-start")
+    ap.add_argument("--numbering-scope", choices=("preserve", "line-start", "anywhere"), default="preserve")
     args = ap.parse_args()
 
     target = Path(args.input or args.input_dir).resolve()
@@ -408,6 +411,7 @@ def main() -> int:
         "schema": "axmath-preflight/v2",
         "target": str(target),
         "checked_at": dt.datetime.now().isoformat(),
+        "numbering_scope": args.numbering_scope,
         "word_pids": word_pids(),
         "environment": environment,
         "documents": states,
@@ -447,6 +451,9 @@ def main() -> int:
         if not saved_preflight_file.is_file():
             raise FileNotFoundError(f"Resume run has no original SOURCE_STATE.json: {run_dir}")
         saved = json.loads(saved_preflight_file.read_text(encoding="utf-8-sig"))
+        saved_scope = saved.get("numbering_scope")
+        if saved_scope is not None and saved_scope != args.numbering_scope:
+            raise RuntimeError("Resume refused: numbering policy differs from the original run.")
         old_docs = saved.get("documents") or []
         if (
             len(old_docs) != 1

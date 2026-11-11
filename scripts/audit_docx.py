@@ -105,7 +105,7 @@ def compare(
     source: Path,
     candidate: Path,
     *,
-    numbering_scope: str = "line-start",
+    numbering_scope: str = "preserve",
     source_analysis: dict | None = None,
     candidate_analysis: dict | None = None,
 ):
@@ -179,7 +179,7 @@ if __name__ == "__main__":
     ap.add_argument("--source", required=True)
     ap.add_argument("--candidate", required=True)
     ap.add_argument("--out")
-    ap.add_argument("--numbering-scope", choices=("line-start", "anywhere"), default="line-start")
+    ap.add_argument("--numbering-scope", choices=("preserve", "line-start", "anywhere"), default="preserve")
     args = ap.parse_args()
     report = compare(Path(args.source), Path(args.candidate), numbering_scope=args.numbering_scope)
     text = json.dumps(report, ensure_ascii=False, indent=2)

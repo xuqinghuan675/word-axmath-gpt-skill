@@ -71,10 +71,23 @@ class LocalCliTests(unittest.TestCase):
         command = self.check_launch(
             ["convert", "--input", r"C:\文档\原稿.docx"],
             "one_click_convert.py",
-            ["--input", "line-start"],
+            ["--input", "preserve"],
         )
         self.assertNotIn("--inspect-only", command)
         self.assertNotIn("--resume-run", command)
+
+    def test_preserve_numbering_policy_is_forwarded(self):
+        command = self.check_launch(
+            ["convert", "--input", r"C:\文档\原稿.docx", "--numbering-scope", "preserve"],
+            "one_click_convert.py", ["--numbering-scope", "preserve"],
+        )
+        self.assertEqual(command[command.index("--numbering-scope") + 1], "preserve")
+        command = self.check_launch(
+            ["diagnose", "--source", r"C:\frozen.docx", "--working", r"C:\working.docx",
+             "--outdir", r"C:\review", "--numbering-scope", "preserve"],
+            "diagnose_after_conversion.py", ["--numbering-scope", "preserve"],
+        )
+        self.assertEqual(command[command.index("--numbering-scope") + 1], "preserve")
 
     def test_resume_keeps_original_checkpoint(self):
         command = self.check_launch(

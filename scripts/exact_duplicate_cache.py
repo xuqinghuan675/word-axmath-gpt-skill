@@ -294,7 +294,7 @@ def clone_ole(source: Path, target: Path, mapping: dict[str, int], expected_uniq
     return {"cloned_objects": len(mapping), "copied_parts": len(copied), "output_sha256": sha256(target)}
 
 
-def restore(manifest_path: Path, ready_path: Path, output: Path, *, raw: bool = False, numbering_scope: str = "line-start") -> dict:
+def restore(manifest_path: Path, ready_path: Path, output: Path, *, raw: bool = False, numbering_scope: str = "preserve") -> dict:
     started = time.perf_counter()
     manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
     if manifest.get("schema") != SCHEMA:
@@ -386,7 +386,7 @@ def main() -> int:
     restore_parser.add_argument("--ready", required=True)
     restore_parser.add_argument("--output", required=True)
     restore_parser.add_argument("--raw", action="store_true", help="Use raw conversion output for a benchmark; normal acceptance uses normalized working_docx")
-    restore_parser.add_argument("--numbering-scope", choices=("line-start", "anywhere"), default="line-start")
+    restore_parser.add_argument("--numbering-scope", choices=("preserve", "line-start", "anywhere"), default="preserve")
     args = parser.parse_args()
     if args.command == "analyze":
         source = Path(args.input).resolve(strict=True)

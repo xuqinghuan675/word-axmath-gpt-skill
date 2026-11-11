@@ -11,6 +11,8 @@
 
 在相应电脑的 Skill 仓库根目录运行，也可从其他目录以 axmath.py 的绝对路径运行。以下尖括号仅为占位符，真实路径必须取自现场 JSON。
 
+先按 `SKILL.md` 和 `MATH_LAYOUT_REFERENCE.md` 确认题号、公式工具及交付限制。转换及后续核查默认 `--numbering-scope preserve`，不会改题号标点；若选择其他策略，各阶段须保持一致，`line-start` 会把行首 `（1）、` 改为 `（1）.`。下列第 5、6 步只适用于允许生成 PDF 的任务：`compare` 会导出临时 PDF。仅交 Word 或禁止 PDF 时跳过这两条，按 `SKILL.md` 的 Word 页面视图分支完成核查并准确报告。
+
     # 1. 原稿只读预检
     python .\axmath.py inspect --input "D:\任务\原稿.docx"
 
@@ -32,7 +34,7 @@
     # 4. 对最终候选稿的全部 AxMath 做一次只读内部内容导出；空内容会阻断验收
     powershell -File .\scripts\inspect_axmath_tex.ps1 -InputDocx "<final.docx>" -AllAxMath -OutputJson "<final-review-dir>\FINAL_AXMATH_INTERNAL_TEX.json"
 
-    # 5. 用上一步完整、哈希绑定的内部审核做最终逐页源稿比较
+    # 5. 仅允许生成 PDF 时：用上一步内部审核做最终逐页源稿比较
     python .\axmath.py compare --source "<frozen_source>" --final "<final.docx>" --outdir "<final-review-dir>" --expected-source-sha256 "<frozen_sha256>" --internal-audit "<final-review-dir>\FINAL_AXMATH_INTERNAL_TEX.json"
 
     # 6. 按正文/公式锚点跨页核对，放大小型行内公式，填写 VISUAL_REVIEW.json 后确认
@@ -40,7 +42,7 @@
 
 支持 --help 和子命令 --help；路径支持空格、中文与相对路径（路径在子进程切换到仓库工作目录前转换为绝对路径）。十三月电脑的 Python 优先使用 D:\我的python\python3.12\python.exe。缺少依赖时请按 requirements.txt 安装。
 
-精确重复的 OfficeMath 达到 64 个时，可选用缓存路径节省宏调用。先执行 `python .\axmath.py cache-analyze --input "<original.docx>"`；再用 `cache-prepare --input "<original.docx>" --outdir "<new-dir>"` 获得哈希绑定的 `CACHE_MANIFEST.json` 和 `prepared\<stem>_unique.docx`。对该准备稿执行上面的官方 `convert`；已有断点仍对准备稿使用 `resume`。转换 READY 生成后，执行 `python .\axmath.py cache-restore --manifest "<CACHE_MANIFEST.json>" --ready "<READY_FOR_GPT_REVIEW.json>" --output "<new-final.docx>"`。随后以缓存 manifest 的冻结原稿和恢复后的工作稿执行同一套 `diagnose`、`compare`、逐页查看与 `finalize`。准备或恢复失败时保留现场，不把缓存结果当成验收通过。
+精确重复的 OfficeMath 达到 64 个时，可选用缓存路径节省宏调用。先执行 `python .\axmath.py cache-analyze --input "<original.docx>"`；再用 `cache-prepare --input "<original.docx>" --outdir "<new-dir>"` 获得哈希绑定的 `CACHE_MANIFEST.json` 和 `prepared\<stem>_unique.docx`。对该准备稿执行上面的官方 `convert`；已有断点仍对准备稿使用 `resume`。转换 READY 生成后，执行 `python .\axmath.py cache-restore --manifest "<CACHE_MANIFEST.json>" --ready "<READY_FOR_GPT_REVIEW.json>" --output "<new-final.docx>"`。随后以缓存 manifest 的冻结原稿和恢复后的工作稿执行 `diagnose` 与符合用户交付限制的最终逐页检查；允许 PDF 时执行 `compare` 和 `finalize`。准备或恢复失败时保留现场，不把缓存结果当成验收通过。
 
 ## Codex 自动发现（可选）
 

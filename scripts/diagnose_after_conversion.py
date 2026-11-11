@@ -274,7 +274,7 @@ def _append_m2_actions(report: dict, source: Path, working: Path, outdir: Path, 
     ])
 
 
-def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool = False, numbering_scope: str = "line-start", prime_review: Path | None = None, class_e_review: Path | None = None) -> dict:
+def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool = False, numbering_scope: str = "preserve", prime_review: Path | None = None, class_e_review: Path | None = None) -> dict:
     source = source.resolve()
     working = working.resolve()
     outdir = outdir.resolve()
@@ -615,7 +615,7 @@ def main() -> int:
         action="store_true",
         help="Run the expensive all-formula Word COM geometry audit. Default is fast static+targeted triage.",
     )
-    ap.add_argument("--numbering-scope", choices=("line-start", "anywhere"), default="line-start")
+    ap.add_argument("--numbering-scope", choices=("preserve", "line-start", "anywhere"), default="preserve")
     ap.add_argument("--prime-review", help="Hash-bound verified AxMath prime semantic review manifest")
     ap.add_argument("--class-e-review", help="Hash-bound review of selected Class E internal exports")
     args = ap.parse_args()

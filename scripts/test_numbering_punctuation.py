@@ -51,6 +51,7 @@ def main() -> int:
     assert normalize_numbering_text("正文中的（1）、是编号", scope="anywhere") == "正文中的（1）.是编号"
     assert normalize_numbering_text("第1、2项", scope="anywhere") == "第1.2项"
     assert normalize_numbering_text("3、第一项", scope="anywhere") == "3.第一项"
+    assert normalize_numbering_text("1、题目\n（1）、小问", scope="preserve") == "1、题目\n（1）、小问"
 
     xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="{W}">
@@ -93,11 +94,23 @@ def main() -> int:
         # normalizer deliberately treats that object as a hard boundary.
         assert paragraphs[3] == "1OBJECT、不能跨对象"
 
-        audit = audit_compare(source, output)
+        audit = audit_compare(source, output, numbering_scope="line-start")
         assert audit["nonmath_text_exact"] is False
         assert audit["nonmath_text_numbering_normalized_exact"] is True
         assert audit["nonmath_text_contract_exact"] is True
         assert audit["numbering_punctuation_expected_change_count"] == 2
+
+        # The source-preservation contract must reject even an otherwise
+        # permitted punctuation-only change, including subquestion labels.
+        preserve_audit = audit_compare(source, output, numbering_scope="preserve")
+        assert not audit_compare(source, output)["nonmath_text_contract_exact"]
+        assert preserve_audit["numbering_punctuation_expected_change_count"] == 0
+        assert preserve_audit["nonmath_text_contract_exact"] is False
+        preserved = Path(td) / "preserved.docx"
+        preserve_report = normalize_docx(source, preserved, scope="preserve")
+        assert preserve_report["replacements"] == 0
+        assert preserved.read_bytes() == source.read_bytes()
+        assert audit_compare(source, preserved, numbering_scope="preserve")["nonmath_text_contract_exact"]
 
         # A document requiring no changes must skip ZIP recompression and
         # preserve all embedded OLE/media bytes and package metadata exactly.

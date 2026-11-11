@@ -8,6 +8,8 @@
 
 **不要转换完就开始猜。必须先读 `SKILL.md`，然后运行 `diagnose_after_conversion.py`，按 `NEXT_ACTION.json` 的 repair class 走。**
 
+数学讲义和练习册先按 `docs/MATH_LAYOUT_REFERENCE.md` 确定原编号、题图、留白和交付边界；用户只要 Word 或禁止 PDF 时，按 `SKILL.md` 的 Word 页面视图分支验收，不运行会生成临时 PDF 的 `strict_final_compare.py`。
+
 正式流程只有一条：
 
 > 冻结源稿 → 官方转换一次 → 确定性诊断 → 当前类唯一修复路线 → 重新诊断 → 最终逐页验收
@@ -40,14 +42,14 @@ python scripts\one_click_convert.py --input "<源.docx>"
 
 源文件不会被覆盖。工作区会保存 frozen source、working copy、转换报告和恢复边界。
 
-转换成功后，`one_click_convert.py` 只有检测到待规范化的编号才另存 working copy；没有匹配编号时直接复用转换工作稿，避免多复制整份 DOCX。`READY_FOR_GPT_REVIEW.json` 始终给出唯一应继续处理的 `working_docx`：
+转换、续跑、缓存恢复、诊断及最终比较默认 `--numbering-scope preserve`，不改写题号标点并按原样核对。显式选择 `line-start` 才会改写以下主问题号和小问，只有符合本次要求时才能使用。`one_click_convert.py` 只有检测到待规范化的编号才另存工作稿；`READY_FOR_GPT_REVIEW.json` 给出应继续处理的 `working_docx`：
 
 - `1、` → `1.`
 - `12、` → `12.`
 - `（1）、` → `（1）.`
 - `(1)、` → `(1).`
 
-只处理段落开头或 Word 换行后的阿拉伯数字编号，支持跨多个 Word text run；不会把正文里的普通顿号全局替换，例如 `第1、2项`、`甲、乙` 保持不变。AxMath / OfficeMath / OLE 对象被当作硬边界，不参与文本替换。原始转换 working copy 仍保留。
+显式选用 `line-start` 时只处理段落开头或 Word 换行后的阿拉伯数字编号，支持跨多个 Word text run；不会把正文里的普通顿号全局替换，例如 `第1、2项`、`甲、乙` 保持不变。AxMath / OfficeMath / OLE 对象被当作硬边界，不参与文本替换。原始转换 working copy 仍保留。
 
 ### 4. 强制诊断入口
 
@@ -196,6 +198,8 @@ Phase A 真正耗时主要在 AxMath 宏内部。历史 1335 公式生产跑约 
 
 ## 最终验收
 
+下方严格比较会生成临时 PDF，只在用户允许时执行。只要 Word 或禁止 PDF 时，参照 `SKILL.md` 中的 Word 页面视图分支；不得虚报已取得 `acceptance_pass=true`。
+
 ```powershell
 powershell -File scripts\inspect_axmath_tex.ps1 -InputDocx "<final>" -AllAxMath -OutputJson "<compare>\FINAL_AXMATH_INTERNAL_TEX.json"
 python scripts\strict_final_compare.py --source "<frozen-source>" --final "<final>" --outdir "<compare>" --expected-source-sha256 "<sha>" --internal-audit "<compare>\FINAL_AXMATH_INTERNAL_TEX.json"
@@ -207,7 +211,7 @@ python scripts\strict_final_compare.py --source "<frozen-source>" --final "<fina
 python scripts\finalize_visual_review.py --report "<compare>\STRICT_FINAL_COMPARE.json" --review "<compare>\VISUAL_REVIEW.json"
 ```
 
-只有 `acceptance_pass=true` 才是正式完成。
+使用 PDF 型严格比较时，只有 `acceptance_pass=true` 才通过该工具的正式验收。
 
 
 ## 2026-10-08 提速与恢复更新
@@ -217,7 +221,7 @@ python scripts\finalize_visual_review.py --report "<compare>\STRICT_FINAL_COMPAR
 - **稳定性：** 同用户转换互斥；完成弹窗必须 `WaitingConvert=1` 才关闭；超时看门狗只对 PID 与进程创建时间双重证明属于本任务的 Word 生效（默认 1800 秒）。
 - **减少重复工作：** 页面图片解码一次，集中裁切该页公式；正常诊断走纯 XML 静态快筛和疑点 Word 验证，不循环进行全书 COM/全页渲染。
 - **更严格的风险检查：** 默认静态检查撇号、导数、集合运算符号，产生针对性的语义/视觉复核清单；背景和页面边框也纳入最终硬门禁。页面恢复按 OOXML 顺序插入且只写新文件。
-- **编号处理：** 默认 `--numbering-scope line-start`；可选 `anywhere` 处理行中数字紧跟顿号，但它会连 `第1、2项` 一并改写，必须按需显式选用并在诊断/最终比较时保持相同选项。
+- **编号处理：** 默认 `--numbering-scope preserve`；显式选择 `line-start` 才会改写行首主问题号和小问标点；`anywhere` 甚至会改写 `第1、2项`。各阶段必须保持同一选项。题号要普通文字时用 `scripts/inspect_question_numbering.py` 排查自动编号和编号域，并在 Word 实查。
 - **测试：** GitHub Actions 增加真实 DOCX XML、页面格式安全、一次解码/页、断点保护等回归测试；真正 AxMath 可编辑性还要经十三月 Word 实机验证。
 
 恢复示例（目录必须是原来的 `run-...`，源文件哈希不能变化）：
