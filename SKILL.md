@@ -60,6 +60,41 @@ python scripts\diagnose_after_conversion.py --source "<frozen_source>" --working
 
 **旧式公式预检与阻断**：预检额外输出所有 OLE 的 `ProgID`、所在 Word story/段落、异常对象清单；可单独运行 `python scripts/embedded_object_inventory.py "<docx>"` 定位。当 `state=blocked_unhandled_embedded_math` 时，禁止执行正式转换。通常须在**新 DOCX** 逐式核对旧式公式、恢复为原生 OfficeMath，重新预检通过后再转换；若用户明确禁止使用 Equation/OfficeMath，则不得执行恢复环节，须寻找现有合规的 AxMath 原生处理方式，无法实现时如实说明。若出现 Word“Equation Editor 3.0 → OfficeMath”对话框，不得直接对全部公式批量确认；自动弹窗不证明数学语义正确。
 
+### AxMath 公式结构防错门禁（转换任务强制）
+
+公式结构检查必须在转换前建立来源基线，并在最终交付前对**全部 AxMath 内部 TeX 导出**执行强制验证；不能只核对对象数量，也不能等终稿发现错位后再临时补规则。
+
+1. `one_click_convert.py --inspect-only` 会扫描冻结来源中的 `lim` 上下标、导数撇号、分式、根式、矩阵/方程数组、分隔符和关系/运算符，并把 `source_math_layout_preflight` 与 `math_layout_contract_preflight` 写入预检结果。正式转换前另生成并保存合同文件：
+
+   ```powershell
+   python scripts\math_layout_contract.py preflight --source "<frozen_source.docx>" --out "<review>\MATH_LAYOUT_PREFLIGHT.json"
+   ```
+
+   若来源本身已有 AxMath 对象，先用 `inspect_axmath_tex.ps1 -AllAxMath` 对**冻结来源**做只读、哈希绑定的内部 TeX 基线导出，并将 `--source-internal-audit` 传给 `preflight`；不得把待修复候选稿的导出当作来源基线。
+
+2. **`lim` 布局是硬规则**：来源 OMML 中以 `lim` 为底的 `m:limLow`、`m:limUpp`、`m:sSub`、`m:sSup`、`m:sSubSup` 都必须在 AxMath 内部 TeX 中保留相同的下标/上标结构，并显式写成 `\lim\limits_{...}`、`\lim\limits^{...}` 或同时具有两者的形式。下标必须位于 `lim` 正下方，上标必须位于正上方；禁止 `\nolimits` 和未显式定位的脚本。`\limsup`、`\liminf` 不是 `\lim`，不得误判或改写。
+
+3. **导数撇号阶数必须保真**：一阶、二阶、三阶撇号分别保留为 AxMath 已验证的规范表示 `\prime`、`''`、`'''`；不得把一阶变成双撇号、把多阶合并，或把 Unicode `′/″/‴`、弯引号和普通单引号未经规范化直接当作 AxMath 内部格式。四阶及未知阶数不得猜测，必须阻断并回到冻结来源核实。
+
+4. **公式结构必须来源对照**：逐式核对分式、根号/根指数、矩阵、分段/方程数组、括号/绝对值、上下标、等号/不等号、正负号、系数和等式右侧。内部 TeX 导出必须保留来源结构和运算符；缺失、额外、顺序改变或无法确认时不通过。公式对象数相等不能替代该检查。
+
+5. 转换和必要修复完成后，对最终候选执行一次完整只读 `-AllAxMath` 导出，再运行：
+
+   ```powershell
+   python scripts\math_layout_contract.py validate --source "<frozen_source.docx>" --final "<final_candidate.docx>" --internal-audit "<review>\FINAL_AXMATH_INTERNAL_TEX.json" --out "<review>\MATH_LAYOUT_VALIDATION.json"
+   ```
+
+   来源已有 AxMath 时追加 `--source-internal-audit "<review>\SOURCE_AXMATH_INTERNAL_TEX.json"`。验证必须 `passed=true` 才能交付；`strict_final_compare.py` 也会自动执行同一门禁。**仅交 Word、不导 PDF 时也必须运行此验证**，不得为了跳过 PDF 而跳过内部公式检查。
+
+6. 若门禁指出 `lim` 位置错误，只能从冻结来源生成定向 donor：
+
+   ```powershell
+   python scripts\build_source_tex_map.py limit-layout --source "<frozen_source.docx>" --working "<working.docx>" --ordinals "<reviewed_ordinals>" --out "<review>\LIMIT_LAYOUT_REPAIR_MAP.json"
+   powershell -File scripts\repair_axmath_from_approved_tex.ps1 -InputDocx "<working.docx>" -OutputDocx "<new_candidate.docx>" -MapPath "<review>\LIMIT_LAYOUT_REPAIR_MAP.json" -ReportPath "<review>\LIMIT_LAYOUT_REPAIR_REPORT.json"
+   ```
+
+   该 map 只接受冻结原稿 OMML、逐式哈希和一对一公式序号；修复写入新 DOCX，之后重新 `-AllAxMath` 导出并验证。禁止从损坏 AxMath 对象自身导出的错误 TeX 反向修复，禁止绕过来源/序号不匹配错误。
+
 ## 2. 官方转换与断点
 
 AxMath 2.7.0.58 的 `AMSMML2AM` **单次**约处理 64–66 个公式；这是插件内部机制，不去绕过。Skill 的总调用次数**没有 64 轮上限**：只要剩余 OfficeMath 大于零就继续，但每一轮必须有严格递减进度，否则停止。

@@ -5,6 +5,9 @@ from normalize_axmath_tex import (
     contains_prime_or_derivative_marker,
     normalize_axmath_tex,
     prime_orders,
+    limit_operator_placements,
+    limit_operator_count,
+    limit_operator_issues,
 )
 
 
@@ -35,6 +38,29 @@ def main() -> int:
         issues = canonical_prime_issues(actual)
         if issues:
             raise AssertionError(f"canonical output still has issues: {actual!r}: {issues}")
+
+    limit_cases = {
+        r"$\lim_{x\to0}f(x)$": r"$\lim\limits_{x\to0}f(x)$",
+        r"$\lim^{n\to\infty}a_n$": r"$\lim\limits^{n\to\infty}a_n$",
+        r"$\lim\nolimits_{x\to0}f(x)$": r"$\lim\limits_{x\to0}f(x)$",
+        r"$\lim\limits_{x\to0}f(x)$": r"$\lim\limits_{x\to0}f(x)$",
+        r"$\limsup_{n\to\infty}a_n$": r"$\limsup_{n\to\infty}a_n$",
+        r"$\liminf_{n\to\infty}a_n$": r"$\liminf_{n\to\infty}a_n$",
+    }
+    for source, expected in limit_cases.items():
+        actual = normalize_axmath_tex(source)
+        if actual != expected:
+            raise AssertionError(f"limit layout normalization {source!r} -> {actual!r}, expected {expected!r}")
+        if limit_operator_issues(actual):
+            raise AssertionError(f"normalized limit operator still violates under/over placement: {actual!r}")
+    if limit_operator_issues(r"$\lim_{x\to0}f(x)$") != ["limit_script_not_forced_under_over"]:
+        raise AssertionError("a scripted lim without explicit \\limits must be rejected")
+    if limit_operator_placements(r"$\lim\limits_{x\to0}^{+}f(x)$") != [["below", "above"]]:
+        raise AssertionError("a lim carrying both lower and upper scripts must preserve both placements")
+    if limit_operator_count(r"$\lim\limits_{x\to0}f(x)+\lim\limits^{n\to\infty}a_n$") != 2:
+        raise AssertionError("limit operator inventory must count both lower and upper scripts")
+    if limit_operator_count(r"$\limsup_{n\to\infty}a_n$") != 0:
+        raise AssertionError("limsup must not be misclassified as the lim operator")
 
     order_cases = {
         r"$F\prime(x)$": [1],

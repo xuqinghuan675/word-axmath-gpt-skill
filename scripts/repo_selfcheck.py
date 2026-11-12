@@ -41,6 +41,9 @@ def main() -> int:
         "validate_local_visual_line_repair.py",
         "axmath_prime_contract.ps1",
         "normalize_axmath_tex.py",
+        "source_semantic_risks.py",
+        "math_layout_contract.py",
+        "test_math_layout_contract.py",
         "normalize_numbering_punctuation.py",
         "inspect_question_numbering.py",
         "probe_axmath_prime_contract.ps1",
@@ -63,6 +66,8 @@ def main() -> int:
             errors.append(f"required production tool missing: {name}")
 
     skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    math_reference_path = ROOT / "docs" / "MATH_LAYOUT_REFERENCE.md"
+    math_reference = math_reference_path.read_text(encoding="utf-8") if math_reference_path.is_file() else ""
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
     one_click = (SCRIPTS / "one_click_convert.py").read_text(encoding="utf-8")
@@ -77,6 +82,9 @@ def main() -> int:
     map_builder = (SCRIPTS / "build_source_tex_map.py").read_text(encoding="utf-8")
     tex_sanity = (SCRIPTS / "source_tex_sanity.py").read_text(encoding="utf-8")
     prime_normalizer = (SCRIPTS / "normalize_axmath_tex.py").read_text(encoding="utf-8")
+    semantic_risks = (SCRIPTS / "source_semantic_risks.py").read_text(encoding="utf-8")
+    math_contract = (SCRIPTS / "math_layout_contract.py").read_text(encoding="utf-8")
+    math_contract_test = SCRIPTS / "test_math_layout_contract.py"
     numbering_normalizer = (SCRIPTS / "normalize_numbering_punctuation.py").read_text(encoding="utf-8")
     prime_contract_ps = (SCRIPTS / "axmath_prime_contract.ps1").read_text(encoding="utf-8")
     prime_probe = (SCRIPTS / "probe_axmath_prime_contract.ps1").read_text(encoding="utf-8")
@@ -111,8 +119,24 @@ def main() -> int:
             "inspect_axmath_tex.ps1",
             "source-reading from AxMath mutation",
             "acceptance_pass=true",
+            "AxMath 公式结构防错门禁",
+            "math_layout_contract.py validate",
+            "\\limits",
+            "冻结来源",
         ],
         "SKILL.md",
+        errors,
+    )
+    require(
+        math_reference,
+        [
+            "AxMath 公式结构与内部 TeX 防错门禁",
+            "下标必须在正下方",
+            "导数撇号按阶数保留",
+            "math_layout_contract.py validate",
+            "冻结来源",
+        ],
+        "docs/MATH_LAYOUT_REFERENCE.md",
         errors,
     )
     require(
@@ -144,10 +168,34 @@ def main() -> int:
             "normalize_docx",
             "numbering_punctuation_normalization",
             "nonmath_text_contract_exact",
+            "source_math_layout_preflight",
+            "math_layout_contract_preflight",
+            "math_structure_candidates",
         ],
         "one_click_convert.py",
         errors,
     )
+    require(
+        semantic_risks,
+        ["sSubSup", "sSup", "limit_subscript_candidates", "math_structure_candidates", "equation_arrays"],
+        "source_semantic_risks.py",
+        errors,
+    )
+    require(
+        math_contract,
+        [
+            "build_source_contract",
+            "validate_math_layout_contract",
+            "limit_operator_placement_mismatch",
+            "prime_order_mismatch",
+            "structure_targets",
+            "source/final formula count changed",
+        ],
+        "math_layout_contract.py",
+        errors,
+    )
+    if not math_contract_test.is_file():
+        errors.append("test_math_layout_contract.py missing")
     if "omml2latex==0.1.1" not in requirements:
         errors.append("requirements.txt missing pinned omml2latex fallback dependency")
 
@@ -295,6 +343,9 @@ def main() -> int:
             "omath_after",
             "paragraphs_after",
             "$doc.Save()",
+            "Assert-LimitOperatorTeX",
+            "LIMIT_OPERATOR_LAYOUT_CONTRACT",
+            "frozen-source OMML provenance",
         ],
         "repair_axmath_from_approved_tex.ps1",
         errors,
@@ -351,6 +402,10 @@ def main() -> int:
             "--deep-geometry",
             "ready_for_strict_final_compare",
             "Do not tune page count directly.",
+            "LIMIT_OPERATOR_LAYOUT_CONTRACT",
+            "MATH_STRUCTURE_CONTRACT",
+            "math_layout_contract.py validate",
+            "mandatory_before_delivery",
         ],
         "diagnose_after_conversion.py",
         errors,
@@ -374,6 +429,10 @@ def main() -> int:
             "single_section_single_column",
             "working_paragraph_index",
             "working_paragraph_axmath_index",
+            "build_limit_layout_map",
+            "LIMIT_OPERATOR_LAYOUT_CONTRACT",
+            "frozen_source_exact_omml",
+            "limit-layout",
         ],
         "build_source_tex_map.py",
         errors,
@@ -511,6 +570,8 @@ def main() -> int:
             "formula_count_contract_ok",
             "paragraph_contract_ok",
             "nonmath_text_contract_ok",
+            "validate_math_layout_contract",
+            "math_layout_contract_pass",
         ],
         "strict_final_compare.py",
         errors,
@@ -558,6 +619,12 @@ def main() -> int:
     )
     if not prime_test.is_file():
         errors.append("test_prime_normalization.py missing")
+    require(
+        math_contract_test.read_text(encoding="utf-8") if math_contract_test.is_file() else "",
+        ["sSup", "sSubSup", "frozen_source_exact_omml", "missing_structure_audit", "MATH_LAYOUT_CONTRACT_OK"],
+        "test_math_layout_contract.py",
+        errors,
+    )
     require(
         approved_tex,
         [

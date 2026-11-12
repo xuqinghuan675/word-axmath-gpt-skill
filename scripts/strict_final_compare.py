@@ -10,6 +10,7 @@ from PIL import Image, ImageDraw
 from audit_docx import compare as audit_docx_compare
 from build_source_tex_map import static_axmath_inventory
 from internal_content_audit import validate_full_internal_audit
+from math_layout_contract import validate_math_layout_contract
 from restore_word_page_layout import page_style_report
 from snapshot_docx import snapshot
 
@@ -120,6 +121,7 @@ def compare(
     repair_ledger: Path | None = None,
     numbering_scope: str = "preserve",
     internal_audit: Path | None = None,
+    source_internal_audit: Path | None = None,
 ) -> dict:
     source_docx = source_docx.resolve()
     final_docx = final_docx.resolve()
@@ -149,6 +151,20 @@ def compare(
         raise ValueError(
             "Final internal AxMath audit failed: " + "; ".join(internal_state["errors"])
             + f". Inspect {internal_audit} for affected ordinals."
+        )
+
+    math_layout_state = validate_math_layout_contract(
+        source_docx,
+        final_docx,
+        internal_audit,
+        source_internal_audit=source_internal_audit,
+        repair_ledger=repair_ledger,
+    )
+    if not math_layout_state["passed"]:
+        raise ValueError(
+            "Final math-layout contract failed: "
+            + "; ".join(math_layout_state["errors"])
+            + f". Inspect {internal_audit} for affected formula ordinals."
         )
 
     source_snapshot = snapshot(source_docx, outdir / "source", "source")
@@ -206,6 +222,8 @@ def compare(
         "internal_audit": str(internal_audit),
         "internal_audit_sha256": internal_state["audit_sha256"],
         "internal_audit_pass": internal_state["passed"] and len(final_formulas) == expected_internal_count,
+        "math_layout_contract": math_layout_state,
+        "math_layout_contract_pass": math_layout_state["passed"],
         "final_omath_count": len(final_omath),
         "source_non_axmath_ole_count": content_audit["source_non_axmath_ole_count"],
         "final_non_axmath_ole_count": content_audit["candidate_non_axmath_ole_count"],
@@ -346,6 +364,7 @@ def compare(
         and report["final_stable_during_compare"]
         and report["formula_count_contract_ok"]
         and report["internal_audit_pass"]
+        and report["math_layout_contract_pass"]
         and report["final_omath_count"] == 0
         and report["source_non_axmath_ole_count"] == 0
         and report["final_non_axmath_ole_count"] == 0
@@ -383,6 +402,7 @@ def main() -> int:
     ap.add_argument("--outdir", required=True)
     ap.add_argument("--expected-source-sha256", required=True)
     ap.add_argument("--internal-audit", required=True, help="Complete hash-bound -AllAxMath export from inspect_axmath_tex.ps1.")
+    ap.add_argument("--source-internal-audit", help="Required read-only -AllAxMath baseline when the frozen source already contains AxMath OLEs.")
     ap.add_argument("--center-tolerance-pt", type=float, default=3.0)
     ap.add_argument(
         "--repair-ledger",
@@ -400,6 +420,7 @@ def main() -> int:
         Path(args.repair_ledger) if args.repair_ledger else None,
         args.numbering_scope,
         Path(args.internal_audit),
+        Path(args.source_internal_audit) if args.source_internal_audit else None,
     )
     print(json.dumps({
         "hard_content_pass": report["hard_content_pass"],
@@ -411,6 +432,7 @@ def main() -> int:
         "repair_ledger_ok": report["repair_ledger_ok"],
         "final_omath_count": report["final_omath_count"],
         "internal_audit_pass": report["internal_audit_pass"],
+        "math_layout_contract_pass": report["math_layout_contract_pass"],
         "final_non_axmath_ole_count": report["final_non_axmath_ole_count"],
         "final_nonmain_omath_count": report["final_nonmain_omath_count"],
         "paragraph_count_equal": report["paragraph_count_equal"],

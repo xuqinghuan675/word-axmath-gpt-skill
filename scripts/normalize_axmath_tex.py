@@ -57,6 +57,85 @@ _OMML_FUSED_PRIME_EXP_RE = re.compile(
 )
 _FUSED_PRIME_TOKEN_RE = re.compile(r"\\prime(?=[A-Za-z0-9])")
 
+# Explicitly position lower/upper limits under/over the lim operator.
+# Do not match longer commands such as \limsup or \liminf.
+_LIMIT_SCRIPT_RE = re.compile(
+    r"\\lim(?![A-Za-z])(?P<gap>\s*)"
+    r"(?P<placement>\\(?:no)?limits)?(?P<post_gap>\s*)"
+    r"(?P<script>[_^])"
+)
+
+
+def normalize_limit_operator_placement(tex: str) -> str:
+    """Force every scripted lim operator to use explicit TeX limit placement."""
+    def repl(match: re.Match[str]) -> str:
+        return r"\lim\limits" + match.group("script")
+
+    return _LIMIT_SCRIPT_RE.sub(repl, str(tex))
+
+
+def limit_operator_issues(tex: str) -> list[str]:
+    """Return hard layout-contract defects for lower/upper lim scripts."""
+    issues = [
+        "limit_script_not_forced_under_over"
+        for match in _LIMIT_SCRIPT_RE.finditer(str(tex))
+        if match.group("placement") != r"\limits"
+    ]
+    return sorted(set(issues))
+
+
+def limit_operator_count(tex: str) -> int:
+    """Count lim operators carrying a lower or upper script."""
+    return len(list(_LIMIT_SCRIPT_RE.finditer(str(tex))))
+
+
+def _consume_tex_argument(value: str, position: int) -> int:
+    while position < len(value) and value[position].isspace():
+        position += 1
+    if position >= len(value):
+        return position
+    if value[position] == "{":
+        depth = 1
+        position += 1
+        while position < len(value) and depth:
+            if value[position] == "\\":
+                position += 2
+                continue
+            if value[position] == "{":
+                depth += 1
+            elif value[position] == "}":
+                depth -= 1
+            position += 1
+        return position
+    if value[position] == "\\":
+        match = re.match(r"\\[A-Za-z]+|\\.", value[position:])
+        return position + (len(match.group(0)) if match else 1)
+    return position + 1
+
+
+def limit_operator_placements(tex: str) -> list[list[str]]:
+    """Return each scripted lim operator's ordered lower/upper script directions."""
+    value = str(tex)
+    placements: list[list[str]] = []
+    for match in re.finditer(r"\\lim(?![A-Za-z])", value):
+        position = match.end()
+        while position < len(value) and value[position].isspace():
+            position += 1
+        placement_command = re.match(r"\\(?:no)?limits(?![A-Za-z])", value[position:])
+        if placement_command:
+            position += len(placement_command.group(0))
+        current: list[str] = []
+        for _ in range(2):
+            while position < len(value) and value[position].isspace():
+                position += 1
+            if position >= len(value) or value[position] not in "_^":
+                break
+            current.append("below" if value[position] == "_" else "above")
+            position = _consume_tex_argument(value, position + 1)
+        if current:
+            placements.append(current)
+    return placements
+
 
 def _normalize_omml_fused_prime_exponent(tex: str) -> str:
     def repl(match: re.Match[str]) -> str:
@@ -154,7 +233,7 @@ def _group_primed_atom_before_exponent(tex: str) -> str:
 
 
 def normalize_axmath_tex(tex: str) -> str:
-    value = str(tex)
+    value = normalize_limit_operator_placement(str(tex))
     value = _canonicalize_prime_tokens(value)
 
     # U+2057 QUADRUPLE PRIME is intentionally not auto-normalized.  The
@@ -231,6 +310,8 @@ def normalize_export_json(input_path: Path) -> list[dict]:
                 "normalization_changed": normalized != wrapped,
                 "prime_orders": prime_orders(normalized),
                 "prime_contract": "axmath_builtin_prime_v2",
+                "limit_operator_count": limit_operator_count(normalized),
+                "limit_operator_issues": limit_operator_issues(normalized),
             }
         )
     return out

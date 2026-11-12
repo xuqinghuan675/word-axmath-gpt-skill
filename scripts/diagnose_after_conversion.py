@@ -409,6 +409,8 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
         "OVERWIDE_SOURCE_SINGLELINE_REVIEW": [
             int(x["ordinal"]) for x in fast["overwide_source_singleline_review"]
         ],
+        "LIMIT_OPERATOR_LAYOUT_CONTRACT": [],
+        "MATH_STRUCTURE_CONTRACT": [],
     }
     class_e_state = {"valid": True, "verified_ordinals": [], "rebuild_ordinals": [], "review": None}
     if class_e_review is not None:
@@ -422,7 +424,11 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
     report["queues"] = fast_queues
     # Static OMML scan costs no Word COM calls, even for thousands of formulas.
     semantic = scan_source_math(source)
-    if semantic["prime_semantic_candidates"] or semantic["set_symbol_visual_candidates"]:
+    if (
+        semantic["prime_semantic_candidates"]
+        or semantic["limit_subscript_candidates"]
+        or semantic["set_symbol_visual_candidates"]
+    ):
         _write(outdir / "SOURCE_SEMANTIC_RISKS.json", semantic)
         report["semantic_risks"] = str(outdir / "SOURCE_SEMANTIC_RISKS.json")
     else:
@@ -430,6 +436,21 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
     fast_queues["CLASS_E_PRIME_RISK"] = [
         row["ordinal"] for row in semantic["prime_semantic_candidates"]
     ]
+    fast_queues["LIMIT_OPERATOR_LAYOUT_CONTRACT"] = semantic["limit_subscript_ordinals"]
+    fast_queues["MATH_STRUCTURE_CONTRACT"] = semantic["math_structure_ordinals"]
+    report["math_layout_contract"] = {
+        "required": bool(
+            semantic["limit_subscript_candidates"]
+            or semantic["prime_semantic_candidates"]
+            or semantic["math_structure_candidates"]
+        ),
+        "limit_subscript_ordinals": semantic["limit_subscript_ordinals"],
+        "limit_operator_count": len(semantic["limit_subscript_candidates"]),
+        "prime_semantic_ordinals": [row["ordinal"] for row in semantic["prime_semantic_candidates"]],
+        "math_structure_ordinals": semantic["math_structure_ordinals"],
+        "validator": "scripts/math_layout_contract.py validate",
+        "status": "pending_complete_internal_axmath_export",
+    }
     fast_queues["SET_SYMBOL_VISUAL_REVIEW"] = [
         row["ordinal"] for row in semantic["set_symbol_visual_candidates"]
     ]
@@ -510,6 +531,28 @@ def diagnose(source: Path, working: Path, outdir: Path, *, deep_geometry: bool =
             f'python scripts/restore_word_page_layout.py --reference "{source}" '
             f'--target "{working}" --output "{restored}"; then re-diagnose.'
         )
+
+    if fast_queues["LIMIT_OPERATOR_LAYOUT_CONTRACT"]:
+        report["next_actions"].append(
+            "The frozen OMML contains scripted lim operators. This is a mandatory final gate, "
+            "not an automatic repair verdict: export every AxMath object once with "
+            "inspect_axmath_tex.ps1 -AllAxMath, then run math_layout_contract.py validate "
+            "against the frozen source and final candidate. Every scripted \\lim must use "
+            "\\limits so lower scripts sit below and upper scripts sit above. If validation "
+            "identifies a defect, build an approved donor only from frozen source OMML with "
+            "build_source_tex_map.py limit-layout --ordinals, apply it to a NEW DOCX with "
+            "repair_axmath_from_approved_tex.ps1, then re-export and validate. Never repair "
+            "from a damaged AxMath object's own TeX export."
+        )
+    if fast_queues["MATH_STRUCTURE_CONTRACT"]:
+        report["next_actions"].append(
+            "The frozen OMML contains formula structures that require source-to-internal-TeX "
+            "verification (fractions, radicals, matrices/equation arrays, delimiters, scripts "
+            "or relation operators). Keep the source ordinal inventory and make the final "
+            "math_layout_contract.py validate pass mandatory before delivery."
+        )
+    if report["math_layout_contract"]["required"]:
+        report["math_layout_contract"]["status"] = "mandatory_before_delivery"
 
     # Fast high-confidence defects are handled before any expensive all-formula
     # Word COM scan. This is the default production path.

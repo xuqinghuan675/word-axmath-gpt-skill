@@ -15,7 +15,9 @@ from pathlib import Path
 import psutil
 
 from audit_docx import analyze, compare as compare_docx
+from math_layout_contract import build_source_contract, static_math_inventory
 from normalize_numbering_punctuation import normalize_docx, numbering_dunhao_positions
+from source_semantic_risks import scan_source_math
 
 
 SKILL_PATH = Path(__file__).resolve().parents[1] / "SKILL.md"
@@ -134,6 +136,32 @@ def inspect_source(path: Path) -> dict:
                 "batch_collapse_signature_axmath_count"
             ),
         })
+        semantic = scan_source_math(path)
+        formula_inventory = static_math_inventory(path)
+        math_contract = None
+        if int(formula_inventory.get("omath_count") or 0) > 0:
+            math_contract = build_source_contract(path)
+        row["source_math_layout_preflight"] = {
+            "formula_count": semantic["formula_count"],
+            "limit_subscript_ordinals": semantic["limit_subscript_ordinals"],
+            "limit_subscript_candidates": semantic["limit_subscript_candidates"],
+            "prime_semantic_candidates": semantic["prime_semantic_candidates"],
+            "math_structure_candidates": semantic["math_structure_candidates"],
+            "math_structure_ordinals": semantic["math_structure_ordinals"],
+            "must_validate_before_delivery": bool(
+                semantic["limit_subscript_candidates"]
+                or semantic["prime_semantic_candidates"]
+                or semantic["math_structure_candidates"]
+            ),
+            "validator": "scripts/math_layout_contract.py validate",
+        }
+        if math_contract is not None:
+            row["math_layout_contract_preflight"] = math_contract
+        elif int(formula_inventory.get("axmath_count") or 0) > 0:
+            row["math_layout_contract_preflight"] = {
+                "status": "source_internal_baseline_required",
+                "required_action": "Export the source DOCX read-only with inspect_axmath_tex.ps1 -AllAxMath and pass --source-internal-audit to math_layout_contract.py preflight/validate.",
+            }
     except Exception as exc:
         row["state"] = "invalid_docx"
         row["error"] = str(exc)

@@ -5,12 +5,21 @@ import hashlib
 import json
 import re
 import zipfile
+from collections import defaultdict
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from omml2latex import convert_omml
 
-from normalize_axmath_tex import canonical_prime_issues, normalize_axmath_tex, prime_orders
+from normalize_axmath_tex import (
+    canonical_prime_issues,
+    limit_operator_count,
+    limit_operator_issues,
+    limit_operator_placements,
+    normalize_axmath_tex,
+    prime_orders,
+)
+from source_semantic_risks import scan_source_math
 from source_math_structure import analyze_source_structure, classify_count_state
 from source_tex_sanity import normalize_word_latex, strip_math_delimiters, word_latex_is_sane
 
@@ -162,6 +171,12 @@ def _source_omath_nodes(source: Path) -> list[ET.Element]:
 def _canonical_axmath_tex(tex: str) -> tuple[str, list[int]]:
     normalized = normalize_axmath_tex(strip_math_delimiters(tex))
     issues = canonical_prime_issues(normalized)
+    limit_issues = limit_operator_issues(normalized)
+    if limit_issues:
+        raise ValueError(
+            "source-derived TeX still violates the explicit lim\\\\limits placement contract: "
+            + ",".join(limit_issues)
+        )
     if issues:
         raise ValueError(
             "source-derived TeX still violates the verified AxMath prime contract: "
@@ -176,6 +191,95 @@ def _safe_source_tex(node: ET.Element) -> str:
         raise ValueError("OMML to LaTeX fallback returned empty output")
     normalized, _ = _canonical_axmath_tex(tex)
     return normalized
+
+
+def build_limit_layout_map(source: Path, working: Path, ordinals: list[int]) -> dict:
+    """Build narrowly scoped AxMath donors from frozen source OMML only."""
+    source = Path(source).resolve()
+    working = Path(working).resolve()
+    source_inventory = static_axmath_inventory(source)
+    if source_inventory["axmath_count"]:
+        raise ValueError(
+            "limit-layout donor generation requires a frozen native-OMML source; "
+            "the source already contains AxMath objects, so use a read-only source -AllAxMath baseline instead"
+        )
+    nodes = _source_omath_nodes(source)
+    if not nodes:
+        raise ValueError("frozen source contains no native OMML formulas")
+    working_inventory = static_axmath_inventory(working)
+    if working_inventory["omath_count"]:
+        raise ValueError("working candidate still contains OfficeMath; convert it before building AxMath donors")
+    if working_inventory["axmath_count"] != len(nodes):
+        raise ValueError(
+            "source-to-working formula ordinals are not one-to-one: "
+            f"source OMML={len(nodes)}, working AxMath={working_inventory['axmath_count']}"
+        )
+
+    semantic = scan_source_math(source)
+    candidates: dict[int, list[dict]] = defaultdict(list)
+    for row in semantic["limit_subscript_candidates"]:
+        candidates[int(row["ordinal"])].append(row)
+    requested = sorted({int(x) for x in ordinals})
+    if not requested:
+        raise ValueError("at least one reviewed --ordinals target is required")
+    missing = sorted(set(requested) - set(candidates))
+    if missing:
+        raise ValueError(f"requested ordinals do not contain a scripted lim in frozen OMML: {missing}")
+
+    locations = {int(row["ordinal"]): row for row in working_inventory["locations"]}
+    rows = []
+    for ordinal in requested:
+        tex = _safe_source_tex(nodes[ordinal - 1])
+        count = limit_operator_count(tex)
+        if count != len(candidates[ordinal]):
+            raise ValueError(
+                f"source TeX/OMML limit operator count mismatch at ordinal {ordinal}: "
+                f"OMML={len(candidates[ordinal])}, TeX={count}"
+            )
+        if limit_operator_issues(tex):
+            raise ValueError(f"source-derived donor still violates explicit \\limits at ordinal {ordinal}")
+        _, orders = _canonical_axmath_tex(tex)
+        source_prime = next(
+            (row for row in semantic["prime_semantic_candidates"] if int(row["ordinal"]) == ordinal),
+            None,
+        )
+        if source_prime is not None and list(source_prime.get("prime_orders") or []) != orders:
+            raise ValueError(
+                f"source prime order cannot be proven at ordinal {ordinal}: "
+                f"OMML={source_prime.get('prime_orders')}, donor={orders}"
+            )
+        location = locations.get(ordinal)
+        if location is None:
+            raise ValueError(f"working AxMath location missing for ordinal {ordinal}")
+        rows.append({
+            "ordinal": ordinal,
+            "source_ordinal": ordinal,
+            "repair_class": "LIMIT_OPERATOR_LAYOUT_CONTRACT",
+            "tex": "$" + tex + "$",
+            "provenance": "frozen_source_exact_omml",
+            "source_limit_scripts": candidates[ordinal],
+            "limit_operator_count": count,
+            "limit_operator_placements": limit_operator_placements(tex),
+            "prime_orders": orders,
+            "prime_contract": "axmath_builtin_prime_v2",
+            "working_paragraph_index": int(location["paragraph_index"]),
+            "working_paragraph_axmath_index": int(location["paragraph_axmath_index"]),
+        })
+
+    return {
+        "schema": "axmath-repair-map/v2",
+        "repair_class": "LIMIT_OPERATOR_LAYOUT_CONTRACT",
+        "source": str(source),
+        "source_sha256": sha256_file(source),
+        "source_raw_omath_count": len(nodes),
+        "working": str(working),
+        "working_sha256": sha256_file(working),
+        "working_axmath_count": int(working_inventory["axmath_count"]),
+        "working_omath_count": int(working_inventory["omath_count"]),
+        "working_paragraph_count": int(working_inventory["paragraph_count"]),
+        "expected_final_axmath_count": int(working_inventory["axmath_count"]),
+        "rows": rows,
+    }
 
 
 def _alignment_anchor(line: str) -> str:
@@ -491,6 +595,12 @@ def main() -> int:
     p3.add_argument("--paragraph-plan", required=True)
     p3.add_argument("--out", required=True)
 
+    p4 = sub.add_parser("limit-layout")
+    p4.add_argument("--source", required=True, help="Frozen original DOCX containing native OfficeMath/OMML")
+    p4.add_argument("--working", required=True, help="Current converted DOCX with one AxMath object per source OMML")
+    p4.add_argument("--ordinals", required=True, help="Comma-separated, internally audited source formula ordinals to rebuild")
+    p4.add_argument("--out", required=True)
+
     args = ap.parse_args()
     if args.mode == "multisibling":
         payload = build_multisibling_map(
@@ -498,6 +608,9 @@ def main() -> int:
         )
     elif args.mode == "visual-wrap":
         payload = build_visual_wrap_map(Path(args.visual_report), Path(args.working))
+    elif args.mode == "limit-layout":
+        ordinals = [int(x.strip()) for x in args.ordinals.split(",") if x.strip()]
+        payload = build_limit_layout_map(Path(args.source), Path(args.working), ordinals)
     else:
         payload = build_visual_line_split_map(
             Path(args.visual_report), Path(args.working), Path(args.paragraph_plan)

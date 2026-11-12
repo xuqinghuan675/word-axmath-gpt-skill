@@ -105,6 +105,16 @@ function Get-MapTargetAxMath {
   return $FallbackAx[$ord-1]
 }
 
+function Assert-LimitOperatorTeX {
+  param([Parameter(Mandatory=$true)][string]$Tex,[string]$Label='formula')
+  $matches=[regex]::Matches($Tex,'\\lim(?![A-Za-z])(?:\s*\\(?:no)?limits)?\s*[_^]')
+  foreach($match in $matches){
+    if($match.Value -notmatch '\\limits'){
+      throw "$Label contains a scripted \\lim without explicit \\limits; lower/upper placement is not approved."
+    }
+  }
+}
+
 $InputFull=[IO.Path]::GetFullPath($InputDocx)
 $OutputFull=[IO.Path]::GetFullPath($OutputDocx)
 $MapFull=[IO.Path]::GetFullPath($MapPath)
@@ -133,6 +143,15 @@ foreach($row in $rows){
   if([string]::IsNullOrWhiteSpace($tex)){throw "Approved TeX is empty for ordinal $($row.ordinal)."}
   if(-not($tex.StartsWith('$') -and $tex.EndsWith('$')) -or $tex.StartsWith('$$') -or $tex.EndsWith('$$')){throw "Approved TeX must be wrapped in exactly one leading and trailing dollar delimiter for ordinal $($row.ordinal)."}
   Assert-CanonicalPrimeTeX -Tex $tex -Label ("ordinal "+[string]$row.ordinal)
+  if([string]$row.repair_class -eq 'LIMIT_OPERATOR_LAYOUT_CONTRACT'){
+    if([string]$row.provenance -ne 'frozen_source_exact_omml'){
+      throw "LIMIT_OPERATOR_LAYOUT_CONTRACT ordinal $($row.ordinal) must use frozen-source OMML provenance."
+    }
+    if([int]$row.source_ordinal -ne [int]$row.ordinal){
+      throw "LIMIT_OPERATOR_LAYOUT_CONTRACT ordinal/source_ordinal mismatch at $($row.ordinal)."
+    }
+    Assert-LimitOperatorTeX -Tex $tex -Label ("ordinal "+[string]$row.ordinal)
+  }
   if([string]$row.repair_class -eq 'M2_SOURCE_VISUAL_WRAP_LOSS'){
     if([int]$row.expected_visual_lines -lt 2){throw "M2 row $($row.ordinal) must prove at least two source visual lines."}
     if($tex -notmatch '\\begin\{aligned\}'){throw "M2 row $($row.ordinal) must use one aligned multi-line donor, not multiple AxMath objects."}
@@ -140,6 +159,19 @@ foreach($row in $rows){
 }
 
 $inputSha=(Get-SharedSha256 $InputFull)
+if($mapMeta -and [string]$mapMeta.repair_class -eq 'LIMIT_OPERATOR_LAYOUT_CONTRACT'){
+  if([string]::IsNullOrWhiteSpace([string]$mapMeta.source) -or [string]::IsNullOrWhiteSpace([string]$mapMeta.source_sha256)){
+    throw 'LIMIT_OPERATOR_LAYOUT_CONTRACT map must include the frozen source path and SHA-256.'
+  }
+  $frozenSource=[IO.Path]::GetFullPath([string]$mapMeta.source)
+  if(-not(Test-Path -LiteralPath $frozenSource -PathType Leaf)){
+    throw "Frozen source required by LIMIT_OPERATOR_LAYOUT_CONTRACT map is missing: $frozenSource"
+  }
+  $actualSourceSha=(Get-SharedSha256 $frozenSource)
+  if($actualSourceSha -ne ([string]$mapMeta.source_sha256).ToLowerInvariant()){
+    throw 'Stale LIMIT_OPERATOR_LAYOUT_CONTRACT map: frozen source SHA-256 changed after donor generation.'
+  }
+}
 if($mapMeta -and $mapMeta.working_sha256){
   if(([string]$mapMeta.working_sha256).ToLowerInvariant() -ne $inputSha){
     throw 'Stale approved map: working_sha256 does not match the current input DOCX.'
