@@ -19,3 +19,6 @@ venv/
 *.control.json
 
 .tmp-regression/
+
+# Local-only GPT MinerU API credentials; never commit.
+/secrets/

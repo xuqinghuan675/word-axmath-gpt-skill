@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased (2026-11-13 MinerU GPT-only entry)
+
+- Add a single MinerU Precision API entry for local PDFs, including resumable batch polling, raw ZIP preservation, safe extraction and DOCX handoff into the existing AxMath pipeline.
+- Store the GPT-only MinerU API token in an ignored local secrets directory; Codex is explicitly denied by default and requires task-scoped user authorization.
+- Add a problem-to-file routing table and document the official API request/status flow.
+
 ## Unreleased (2026-11-12 AxMath formula structure gate)
 
 - Add a source-first formula-layout contract: scripted `lim` operators must use explicit `\\limits`, derivative prime order is preserved, and source structure (fractions, radicals, matrices/equation arrays, delimiters, scripts and relation operators) is checked against the complete AxMath internal-TeX export.

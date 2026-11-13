@@ -16,6 +16,14 @@
 
 新对话不得从旧聊天记忆、页数差、公式宽度印象或历史报告直接发明修复。
 
+## PDF 输入：先用 MinerU
+
+本 Skill 的 AxMath CLI 输入是 DOCX。扫描 PDF 先由 GPT 使用本机 MinerU Precision API 生成 mineru_original.docx：
+
+    python scripts\mineru_api.py parse --input "<原稿.pdf>" --outdir "<独立工作区>"
+
+Token 位于本机被 Git 忽略的 secrets\mineru_token.txt。Codex 默认禁止读取或使用；只有用户在当次任务提示词中明确授权才开放。API 状态、恢复和故障定位见 docs/MINERU_API.md。
+
 ## 快速开始
 
 ### 1. 安装依赖
@@ -24,7 +32,7 @@
 python -m pip install -r requirements.txt
 ```
 
-依赖包括 `pywin32`、`PyMuPDF`、`omml2latex` 等。不要跑完大文档后才发现渲染/OMML fallback 缺包。
+依赖包括 `pywin32`、`PyMuPDF`、`omml2latex` 和 MinerU API 所需的 `requests`。不要跑完大文档后才发现渲染/OMML fallback 缺包。
 
 ### 2. 预检
 

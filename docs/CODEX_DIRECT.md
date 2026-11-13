@@ -1,5 +1,11 @@
 # Codex 本地直连 AxMath（不经过网页电脑插件）
 
+## MinerU GPT 专属 Token 权限（强制）
+
+Codex 默认**禁止**读取 D:\CHATGPT\skills\word-axmath-gpt-skill\secrets\mineru_token.txt，禁止运行 scripts\mineru_api.py，也禁止用该 Token 调用 MinerU API。只有用户在**当前任务提示词**中明确授权“允许 Codex 使用本机 MinerU Token”时，才可在该任务范围内使用；授权不跨任务延续。不得把 Token 写入提示词、命令行参数、日志、Git、共享文件或输出。
+
+未获授权时，Codex 只处理已由 GPT 生成的 mineru_original.docx，从 AxMath 的 inspect / convert / resume / diagnose 主链开始。MinerU API 入口和故障处理见 docs\MINERU_API.md。
+
 仓库根目录的 axmath.py 是对现有权威 Python 脚本的轻量入口。**Codex 使用自己运行所在 Windows 电脑的终端、Python、PowerShell、Microsoft Word COM 和 AxMath，完全不调用 thirteenthy / Qinghuan PC 1**，也不需要网页 ChatGPT 连接器的租约。
 
 - 十三月电脑：D:\CHATGPT\skills\word-axmath-gpt-skill

@@ -1,9 +1,31 @@
 ---
 name: word-axmath-conversion
-description: Arrange mathematics handouts, student workbooks and question sets in Word or WPS, and convert Microsoft Word OfficeMath to genuine editable AxMath with frozen-source safety and visual acceptance.
+description: Convert mathematics PDFs through MinerU to editable DOCX, then convert OfficeMath to genuine editable AxMath with frozen-source safety and visual acceptance.
 ---
 
 # Word → AxMath Skill · 主流程（精简版）
+
+## PDF → MinerU → AxMath（唯一入口）
+
+**输入是 PDF：先用 MinerU API 生成可编辑 DOCX，再进入本 Skill 的 AxMath 主链。不要把 PDF 直接交给 one_click_convert.py。**
+
+GPT 在本机执行，使用已配置的 GPT 专属 MinerU Token：
+
+    python scripts\mineru_api.py parse --input "<原稿.pdf>" --outdir "<独立任务工作区>"
+
+完成后使用工作区里的 mineru_original.docx 作为冻结输入；mineru_result.zip、mineru_output\、mineru_job.json 和 mineru_ready.json 均保留。断网或排队时重跑同一命令，按已有 batch 恢复，不重新提交。具体 API、状态和故障路由见 docs/MINERU_API.md。
+
+**Token 权限边界：** Token 只存于本机 secrets\mineru_token.txt，已加入 Git 忽略。Codex 默认不得读取该文件、运行 MinerU API 脚本或使用此 Token；只有用户在当前任务提示词中明确授权 Codex 使用本机 MinerU Token，才允许本次任务使用。未授权时，Codex 等待 GPT 交付 mineru_original.docx 后再执行 AxMath 主链。
+
+遇到问题先按下表定位，不要乱试：
+
+| 问题 | 先读 |
+|---|---|
+| Token、401/403、A0202/A0211、上传/排队、ZIP/DOCX 缺失 | docs/MINERU_API.md、mineru_job.json |
+| AxMath 转换中断、READY / checkpoint、Word / AxMath 环境 | 本文件第 1–2 节、docs/CODEX_DIRECT.md |
+| NEXT_ACTION.json 指出特定公式/对象异常 | docs/REPAIR_REFERENCE.md 对应 repair class |
+| lim、撇号、分式、矩阵、公式结构异常 | 本文件的 AxMath 公式结构防错门禁 |
+| 最终页面/题号/图形/分页/交付限制 | docs/MATH_LAYOUT_REFERENCE.md 与本文件第 4 节 |
 
 ## Codex 本地直连入口（不依赖网页电脑插件）
 
