@@ -2,6 +2,21 @@
 
 将数学 PDF / DOCX 整理为 Word 练习资料，保留可编辑 AxMath 公式。Microsoft Word 和 AxMath 需单独安装，仓库自有代码采用 [MIT](LICENSE)。
 
+
+## 首轮生成硬规则
+
+**先定规则，再生成 DOCX；不允许把终稿审计当成补救流程。**
+
+- 题号直接写普通文字，保留原层级；制表位 + 悬挂缩进对齐，禁自动编号、编号域和 Heading 折叠身份。
+- 生成前建立 SOURCE_FINAL_FORMULA_MAP.json；每个源公式填写 source_anchor 和来源 expected_tex；PDF/图片公式列为 source_formula_visual，正文独立变量/表达式列为 added_body_math。
+- 公式必须通过官方 AxMath 宏生成真实 OLE：源 OMML 使用 AMSMML2AM，TeX/正文数学使用 AMSTeX2AM；宏调用前拆分普通说明文字与数学片段。下置 lim 用 \underset{...}{\lim}；大积分用 \int，禁 \smallint。
+- 中文句号只在普通正文文字节点中替换为 ASCII 点，记录数量；不触碰公式、OLE、图像或字段。
+- 每个源公式和新增数学对象都映射到终稿 OLE；一源多对象允许，但不允许漏映射或重复归属。
+- 最终只做一次完整内部导出和一次 Word 逐页验收；问题按定位修复，不反复全书审计。
+
+具体命令和映射格式见 [首轮生成工作流](docs/AXMATH_CONVERSION_WORKFLOW.md)。
+
+
 ## 从这里开始
 
 **[SKILL.md](SKILL.md) 是唯一任务入口。** Codex / GPT 每次处理新文件先读它，并按任务加载下表所需文件。

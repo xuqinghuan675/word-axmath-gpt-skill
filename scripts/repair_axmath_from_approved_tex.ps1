@@ -107,11 +107,13 @@ function Get-MapTargetAxMath {
 
 function Assert-LimitOperatorTeX {
   param([Parameter(Mandatory=$true)][string]$Tex,[string]$Label='formula')
-  $matches=[regex]::Matches($Tex,'\\lim(?![A-Za-z])(?:\s*\\(?:no)?limits)?\s*[_^]')
-  foreach($match in $matches){
-    if($match.Value -notmatch '\\limits'){
-      throw "$Label contains a scripted \\lim without explicit \\limits; lower/upper placement is not approved."
-    }
+  $legacyLower=[regex]::Matches($Tex,'\\lim(?![A-Za-z])\s*(?:\\(?:no)?limits)?\s*_')
+  if($legacyLower.Count -gt 0){
+    throw "$Label contains a lower lim subscript; encode it as \\underset{...}{\\lim}."
+  }
+  $legacyPlacement=[regex]::Matches($Tex,'\\lim(?![A-Za-z])\s*\\(?:no)?limits')
+  if($legacyPlacement.Count -gt 0){
+    throw "$Label uses \\limits or \\nolimits; use \\underset{...}{\\lim} for lower scripts and \\lim^{...} for upper scripts."
   }
 }
 

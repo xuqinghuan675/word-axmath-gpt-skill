@@ -126,6 +126,7 @@ def make_parser() -> argparse.ArgumentParser:
     compare.add_argument("--outdir", required=True)
     compare.add_argument("--expected-source-sha256", required=True)
     compare.add_argument("--internal-audit", required=True, help="Complete -AllAxMath internal export JSON.")
+    compare.add_argument("--formula-map", required=True, help="Hash-bound source-to-final AxMath formula mapping manifest.")
     compare.add_argument("--source-internal-audit", help="Read-only -AllAxMath baseline when the frozen source already contains AxMath OLEs.")
     compare.add_argument("--repair-ledger", help="Validated ledger for explicitly approved M2-B line splitting.")
     compare.add_argument("--center-tolerance-pt", type=nonnegative_finite_float, help="Normally do not override the original default.")
@@ -183,6 +184,7 @@ def command_for(args: argparse.Namespace) -> list[str]:
             "--outdir", local_path(args.outdir),
             "--expected-source-sha256", args.expected_source_sha256,
             "--internal-audit", local_path(args.internal_audit),
+            "--formula-map", local_path(args.formula_map),
             "--numbering-scope", args.numbering_scope,
         ]
         if args.source_internal_audit:

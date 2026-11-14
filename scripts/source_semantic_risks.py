@@ -27,6 +27,13 @@ _RELATION_SYMBOLS = {
     "+": "plus", "−": "minus", "-": "minus", "±": "pm", "∓": "mp",
     "×": "times", "÷": "divide", "·": "cdot",
 }
+_OPERATOR_SYMBOLS = {
+    "∫": "integral", "∬": "double_integral", "∭": "triple_integral", "∮": "contour_integral",
+    "∑": "sum", "∏": "product", "∐": "coproduct",
+    "∪": "union", "∩": "intersection", "∈": "membership", "∉": "nonmembership",
+    "→": "arrow", "↦": "mapsto", "⇒": "implies", "⇔": "equivalence",
+    "∞": "infinity",
+}
 
 
 def _math_text(node: ET.Element | None) -> str:
@@ -78,7 +85,7 @@ def _limit_script_candidates(formula: ET.Element, ordinal: int) -> list[dict]:
             "script_texts": script_texts,
             "script_text": " / ".join(x for x in script_texts if x),
             "base_text": base_text,
-            "reason": "limit_operator_script_must_be_explicitly_placed_with_limits",
+            "reason": "lower_lim_script_must_use_underset_for_axmath_roundtrip",
         })
     return rows
 
@@ -91,6 +98,10 @@ def _formula_structure_candidate(formula: ET.Element, ordinal: int, inspected: s
     )
     relation_counts = Counter(
         token for char, token in _RELATION_SYMBOLS.items() if char in inspected
+        for _ in range(inspected.count(char))
+    )
+    operator_counts = Counter(
+        token for char, token in _OPERATOR_SYMBOLS.items() if char in inspected
         for _ in range(inspected.count(char))
     )
     delimiters = []
@@ -111,16 +122,17 @@ def _formula_structure_candidate(formula: ET.Element, ordinal: int, inspected: s
         "matrices": node_counts["m"],
         "equation_arrays": node_counts["eqArr"],
         "delimiters": delimiters,
-        "subscripts": node_counts["sSub"] + node_counts["limLow"],
-        "superscripts": node_counts["sSup"] + node_counts["limUpp"],
+        "subscripts": node_counts["sSub"] + node_counts["limLow"] + node_counts["sSubSup"],
+        "superscripts": node_counts["sSup"] + node_counts["limUpp"] + node_counts["sSubSup"],
         "subsuperscripts": node_counts["sSubSup"],
         "relations": dict(sorted(relation_counts.items())),
+        "operators": dict(sorted(operator_counts.items())),
     }
     if not any((
         signature["fractions"], signature["radicals"], signature["matrices"],
         signature["equation_arrays"], signature["delimiters"],
         signature["subscripts"], signature["superscripts"],
-        signature["subsuperscripts"], signature["relations"],
+        signature["subsuperscripts"], signature["relations"], signature["operators"],
     )):
         return None
     return {

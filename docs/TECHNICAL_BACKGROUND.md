@@ -1,5 +1,8 @@
 # 历史技术背景（非当前执行指令）
 
+
+> 2026-11-14 更新：本文件中旧的下置极限写法建议均已被覆盖；当前统一使用 \underset{...}{\lim}，禁止依赖 \lim\limits / \nolimits。执行时以 SKILL.md 和 AXMATH_CONVERSION_WORKFLOW.md 为准。
+
 本文件保存原 README 中的技术说明、实测性能、故障案例和历史命令，仅供追溯。
 当前如何操作，必须从仓库根目录 SKILL.md 选择对应权威文档；旧命令与新流程冲突时按当前入口执行。
 
@@ -218,7 +221,7 @@ Phase A 真正耗时主要在 AxMath 宏内部。历史 1335 公式生产跑约 
 
 ```powershell
 powershell -File scripts\inspect_axmath_tex.ps1 -InputDocx "<final>" -AllAxMath -OutputJson "<compare>\FINAL_AXMATH_INTERNAL_TEX.json"
-python scripts\strict_final_compare.py --source "<frozen-source>" --final "<final>" --outdir "<compare>" --expected-source-sha256 "<sha>" --internal-audit "<compare>\FINAL_AXMATH_INTERNAL_TEX.json"
+python scripts\strict_final_compare.py --source "<frozen-source>" --final "<final>" --outdir "<compare>" --expected-source-sha256 "<sha>" --internal-audit "<compare>\FINAL_AXMATH_INTERNAL_TEX.json" --formula-map "<compare>\SOURCE_FINAL_FORMULA_MAP.json"
 ```
 
 完整导出中任何空内容、控制字符、漏检序号或哈希失配都会阻止最终比较。然后必须查看源稿与结果稿**所有页面**，按正文和公式锚点跨页核对；相同页码不保证相同内容，小型行内公式需看清晰局部视图，再：

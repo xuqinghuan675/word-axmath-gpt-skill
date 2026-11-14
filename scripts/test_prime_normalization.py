@@ -8,6 +8,7 @@ from normalize_axmath_tex import (
     limit_operator_placements,
     limit_operator_count,
     limit_operator_issues,
+    smallint_issues,
 )
 
 
@@ -40,10 +41,10 @@ def main() -> int:
             raise AssertionError(f"canonical output still has issues: {actual!r}: {issues}")
 
     limit_cases = {
-        r"$\lim_{x\to0}f(x)$": r"$\lim\limits_{x\to0}f(x)$",
-        r"$\lim^{n\to\infty}a_n$": r"$\lim\limits^{n\to\infty}a_n$",
-        r"$\lim\nolimits_{x\to0}f(x)$": r"$\lim\limits_{x\to0}f(x)$",
-        r"$\lim\limits_{x\to0}f(x)$": r"$\lim\limits_{x\to0}f(x)$",
+        r"$\lim_{x\to0}f(x)$": r"$\underset{x\to0}{\lim}f(x)$",
+        r"$\lim^{n\to\infty}a_n$": r"$\lim^{n\to\infty}a_n$",
+        r"$\lim\nolimits_{x\to0}f(x)$": r"$\underset{x\to0}{\lim}f(x)$",
+        r"$\lim\limits_{x\to0}f(x)$": r"$\underset{x\to0}{\lim}f(x)$",
         r"$\limsup_{n\to\infty}a_n$": r"$\limsup_{n\to\infty}a_n$",
         r"$\liminf_{n\to\infty}a_n$": r"$\liminf_{n\to\infty}a_n$",
     }
@@ -52,15 +53,21 @@ def main() -> int:
         if actual != expected:
             raise AssertionError(f"limit layout normalization {source!r} -> {actual!r}, expected {expected!r}")
         if limit_operator_issues(actual):
-            raise AssertionError(f"normalized limit operator still violates under/over placement: {actual!r}")
-    if limit_operator_issues(r"$\lim_{x\to0}f(x)$") != ["limit_script_not_forced_under_over"]:
-        raise AssertionError("a scripted lim without explicit \\limits must be rejected")
-    if limit_operator_placements(r"$\lim\limits_{x\to0}^{+}f(x)$") != [["below", "above"]]:
+            raise AssertionError(f"normalized limit operator still violates AxMath placement: {actual!r}")
+    if limit_operator_issues(r"$\lim_{x\to0}f(x)$") != ["lim_subscript_requires_underset"]:
+        raise AssertionError("a lower lim script without underset must be rejected")
+    if limit_operator_issues(r"$\lim\limits_{x\to0}f(x)$").count("lim_limits_command_not_allowed") != 1:
+        raise AssertionError("lim\\\\limits must be rejected as unstable")
+    if limit_operator_placements(r"$\underset{x\to0}{\lim}^{+}f(x)$") != [["below", "above"]]:
         raise AssertionError("a lim carrying both lower and upper scripts must preserve both placements")
-    if limit_operator_count(r"$\lim\limits_{x\to0}f(x)+\lim\limits^{n\to\infty}a_n$") != 2:
+    if limit_operator_count(r"$\underset{x\to0}{\lim}f(x)+\lim^{n\to\infty}a_n$") != 2:
         raise AssertionError("limit operator inventory must count both lower and upper scripts")
     if limit_operator_count(r"$\limsup_{n\to\infty}a_n$") != 0:
         raise AssertionError("limsup must not be misclassified as the lim operator")
+    if normalize_axmath_tex(r"$\smallint f(x)$") != r"$\int f(x)$":
+        raise AssertionError("smallint must normalize to the required integral form")
+    if smallint_issues(r"$\smallint f(x)$") != ["smallint_forbidden"]:
+        raise AssertionError("raw AxMath output must reject smallint")
 
     order_cases = {
         r"$F\prime(x)$": [1],

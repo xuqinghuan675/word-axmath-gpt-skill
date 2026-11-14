@@ -14,19 +14,26 @@ Token 不得写入提示词、命令行参数、日志、Git、共享文件或�
 - 十三月电脑：D:\CHATGPT\skills\word-axmath-gpt-skill
 - 清欢电脑：D:\work\axmath\word-axmath-gpt-skill（已部署本地入口）
 
-请先读取本仓库 SKILL.md，遇到语义或几何异常时才读 docs/REPAIR_REFERENCE.md。不能绕过 Microsoft Word / AxMath 的 Windows 本机环境；Codex 云端 Linux 环境不能执行 Word COM；64–66 个公式的 AxMath 宏内部批次限制没有改变。
+先读本仓库 SKILL.md 和 AXMATH_CONVERSION_WORKFLOW.md 的“首轮生成硬规则”；每次任务必须先冻结源稿、完成正文标点专用处理、检查编号并创建 SOURCE_FINAL_FORMULA_MAP.json，再开始 AxMath 生成。遇到语义或几何异常时才读 REPAIR_REFERENCE.md。不能绕过 Microsoft Word / AxMath 的 Windows 本机环境；Codex 云端 Linux 环境不能执行 Word COM；64–66 个公式的 AxMath 宏内部批次限制没有改变.
 
 ## 直连命令
 
 在相应电脑的 Skill 仓库根目录运行，也可从其他目录以 axmath.py 的绝对路径运行。以下尖括号仅为占位符，真实路径必须取自现场 JSON。
 
-先按 `SKILL.md`、`MATH_LAYOUT_REFERENCE.md` 和 `NUMBERING_AND_OUTLINE.md` 确认题号、普通样式、编号对齐及交付限制。转换及后续核查默认 `--numbering-scope preserve`，不会改题号标点；若选择其他策略，各阶段须保持一致，`line-start` 会把行首 `（1）、` 改为 `（1）.`。下列第 5、6 步只适用于允许生成 PDF 的任务：`compare` 会导出临时 PDF。仅交 Word 或禁止 PDF 时跳过这两条，按 `docs/AXMATH_CONVERSION_WORKFLOW.md` 的 Word 页面视图分支完成核查并准确报告。
+先按 SKILL.md 和 AXMATH_CONVERSION_WORKFLOW.md 的首轮生成硬规则处理冻结来源：正文句号只用专用脚本转换，题号保持普通文字和原层级，公式目标映射必须在生成前建立。转换及后续核查默认 --numbering-scope preserve；不要用它代替题号普通文字检查。下列第 5、6 步只适用于允许生成 PDF 的任务：compare 会导出临时 PDF。仅交 Word 或禁止 PDF 时跳过这两条，使用 Word-only 公式映射验收和页面视图分支完成核查。
 
-    # 1. 原稿只读预检
-    python .\axmath.py inspect --input "D:\任务\原稿.docx"
+    # 0. 原件保留；从 MinerU 输出或原始 DOCX 生成冻结副本，只替换正文普通文字中的中文句号
+    python .\scripts\normalize_body_punctuation.py --source "D:\任务\mineru_original.docx" --output "D:\任务\frozen_source.docx" --report "D:\任务\review\BODY_PUNCTUATION.json"
+    python .\scripts\inspect_question_numbering.py "D:\任务\frozen_source.docx"
 
-    # 2. 正式转换：只转换一次
-    python .\axmath.py convert --input "D:\任务\原稿.docx"
+    # 1. 冻结来源只读预检；读取 READY_FOR_GPT_REVIEW.json 中的 frozen_source 绝对路径
+    python .\axmath.py inspect --input "D:\任务\frozen_source.docx"
+    # 对 READY 文件记录的同一 frozen_source 建立映射；填好 expected_tex 和视觉/正文目标后再生成
+    python .\scripts\math_layout_contract.py map-template --source "<READY.frozen_source>" --out "D:\任务\final-review-dir\SOURCE_FINAL_FORMULA_MAP.json"
+    # 为每个 source_formula 从冻结来源填写 source_anchor 和 expected_tex；再补齐 source_formula_visual（PDF/图片源公式）和 added_body_math（正文数学对象），然后继续。
+
+    # 2. 使用同一 READY run / frozen_source 继续正式转换；不得重新冻结成另一个路径
+    python .\axmath.py convert --input "<READY.frozen_source>"
 
     # 已有运行目录时必须恢复，不重新开始转换
     python .\axmath.py resume --input "D:\任务\原稿.docx" --resume-run "D:\任务\run-YYYYMMDD-HHMMSS"
@@ -43,9 +50,10 @@ Token 不得写入提示词、命令行参数、日志、Git、共享文件或�
     # 4. 对最终候选稿的全部 AxMath 做一次只读内部内容导出；空内容会阻断验收
     powershell -File .\scripts\inspect_axmath_tex.ps1 -InputDocx "<final.docx>" -AllAxMath -OutputJson "<final-review-dir>\FINAL_AXMATH_INTERNAL_TEX.json"
 
-    # 5. 仅允许生成 PDF 时：用上一步内部审核做最终逐页源稿比较
-    python .\axmath.py compare --source "<frozen_source>" --final "<final.docx>" --outdir "<final-review-dir>" --expected-source-sha256 "<frozen_sha256>" --internal-audit "<final-review-dir>\FINAL_AXMATH_INTERNAL_TEX.json"
+    # 5. 仅允许生成 PDF 时：用上一步内部审核和映射清单做最终逐页源稿比较
+    python .\axmath.py compare --source "<READY.frozen_source>" --final "<final.docx>" --outdir "<final-review-dir>" --expected-source-sha256 "<frozen_sha256>" --internal-audit "<final-review-dir>\FINAL_AXMATH_INTERNAL_TEX.json" --formula-map "<final-review-dir>\SOURCE_FINAL_FORMULA_MAP.json"
 
+    # Word-only：改用 math_layout_contract.py validate，传入同一 formula-map；不要再同时运行 compare。
     # 6. 按正文/公式锚点跨页核对，放大小型行内公式，填写 VISUAL_REVIEW.json 后确认
     python .\axmath.py finalize --report "<final-review-dir>\STRICT_FINAL_COMPARE.json" --review "<final-review-dir>\VISUAL_REVIEW.json"
 

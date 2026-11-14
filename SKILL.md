@@ -7,6 +7,23 @@ description: Handle math PDF/DOCX formatting, plain-text numbered exercises, non
 
 **每次新任务先读本文件，再按下表选择对应文档；不要凭旧聊天猜工作流。**
 
+
+## 首轮生成硬规则（强制，优先级高于下方通用流程）
+
+> **所有规则在第一次写入新 DOCX 时落实。禁止先生成错误版，再靠终稿审计补救。**
+
+1. **先冻结来源**：原 PDF/DOCX 不覆盖；生成新的 frozen_source.docx 并记录 SHA-256。先清点题号、公式、图片和正文数学目标。
+2. **题号写普通文字**：保留原序号与层级；禁止自动编号、编号域和 Heading 折叠身份。用制表位 + 悬挂缩进对齐，保留各层级原有缩进差异。
+3. **先建公式目标映射**：生成前运行 math_layout_contract.py map-template 建立 SOURCE_FINAL_FORMULA_MAP.json；每个 source_formula 都要从冻结来源填写 source_anchor 和 expected_tex；PDF/图片中未成为 OMML 的公式列为 source_formula_visual；正文独立变量/表达式列为 added_body_math。
+4. **只生成真实 AxMath OLE**：源 OMML 使用官方 AMSMML2AM；源 TeX 和正文数学对象使用官方 AMSTeX2AM。宏调用前先把中文说明、题号/题目标记与数学片段分开；普通文字留在 Word，数学部分单独生成 OLE。
+5. **公式硬约束**：大积分用 \int，禁止 \smallint；下置极限用 \underset{...}{\lim}，禁止依赖 \lim\limits / \nolimits；撇号、结构和运算符按冻结来源保真。
+6. **标点只改正文文字**：用 normalize_body_punctuation.py 仅替换主文档正文普通 w:t 中的中文句号；不改公式、OLE、图表/图片、字段或页眉页脚。记录替换数量并确认普通正文残留为 0。
+7. **映射必须闭合**：每个源公式映射到一个或多个终稿 AxMath 对象；source_formula_visual 和 added_body_math 也必须有来源锚点、预期 TeX 和终稿对象序号。所有终稿对象恰好归属一次。
+8. **只做一轮最终验收**：完整导出 AxMath 内部 TeX，确认无 OfficeMath/未知 OLE、题号为普通文字、映射无遗漏、标点计数正确；随后做一次 Word 实际渲染和逐页验收。问题按定位定向修复，不重复全书审计。
+
+命令、清单字段和验收步骤以 docs/AXMATH_CONVERSION_WORKFLOW.md 的“首轮生成硬规则”为准；编号结构以 docs/NUMBERING_AND_OUTLINE.md 为准。
+
+
 | 任务 | 必读文件 |
 |---|---|
 | 数学讲义、练习册、题目排版及分页留白 | `docs/MATH_LAYOUT_REFERENCE.md` + `docs/NUMBERING_AND_OUTLINE.md` |

@@ -32,7 +32,7 @@ class LocalCliTests(unittest.TestCase):
         base = [
             "compare", "--source", "source.docx", "--final", "final.docx",
             "--outdir", "review", "--expected-source-sha256", "a" * 64,
-            "--internal-audit", "audit.json",
+            "--internal-audit", "audit.json", "--formula-map", "formula-map.json",
         ]
         for value in ("-0.1", "nan", "inf", "-inf", "invalid"):
             with self.subTest(value=value), contextlib.redirect_stderr(io.StringIO()):
@@ -117,9 +117,9 @@ class LocalCliTests(unittest.TestCase):
         self.check_launch(
             ["compare", "--source", r"C:\source.docx", "--final", r"C:\candidate.docx",
              "--outdir", r"C:\strict", "--expected-source-sha256", "a" * 64,
-             "--internal-audit", r"C:\internal.json"],
+             "--internal-audit", r"C:\internal.json", "--formula-map", r"C:\formula-map.json"],
             "strict_final_compare.py",
-            ["--expected-source-sha256", "a" * 64, "--internal-audit"],
+            ["--expected-source-sha256", "a" * 64, "--internal-audit", "--formula-map"],
         )
         self.check_launch(
             ["finalize", "--report", r"C:\strict\STRICT_FINAL_COMPARE.json",

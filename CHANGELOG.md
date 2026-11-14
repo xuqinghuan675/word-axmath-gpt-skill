@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased (2026-11-14 first-pass AxMath generation contract)
+
+- Put mandatory first-pass rules at the top of SKILL.md and README: freeze source, ordinary-text numbering, text/math boundary separation, safe body punctuation, formula target mapping, and one final acceptance.
+- Add a hash-bound source-to-final formula map. It supports one source formula mapping to multiple AxMath OLEs, PDF/image source formulas, and additional body-math targets; validation checks exact source/final coverage without requiring equal object totals.
+- Replace the unstable lower-limit lim-limits rule with the AxMath-stable underset form; update the parser and PowerShell macro gate, and reject raw smallint in final AxMath exports.
+- Add a DOCX-safe punctuation normalizer that changes only ordinary main-body Word text and proves all other package parts, including OLE/media, remain unchanged.
+
 ## Unreleased (2026-11-14 numbering and Skill routing)
 
 - Route numbered math exercises and non-collapsible headings to one canonical, first-pass contract with Word/WPS acceptance.

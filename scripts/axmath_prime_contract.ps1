@@ -17,6 +17,15 @@ function Assert-CanonicalPrimeTeX {
       throw "noncanonical_prime_literal for $Label. Normalize with scripts\normalize_axmath_tex.py before AMSTeX2AM."
     }
   }
+  if($Tex -match "\\smallint(?![A-Za-z])"){
+    throw "smallint_forbidden for $Label. Use \\int for the integral."
+  }
+  if($Tex -match "\\lim(?![A-Za-z])\\(?:no)?limits"){
+    throw "lim_limits_command_not_allowed for $Label. Use \\underset{...}{\\lim} for a lower limit."
+  }
+  if($Tex -match "\\lim(?![A-Za-z])(?:\\(?:no)?limits)?\s*_"){
+    throw "lim_subscript_requires_underset for $Label. Use \\underset{...}{\\lim}."
+  }
   if($Tex -match "(?<!')'(?!')"){
     throw "noncanonical_single_prime_apostrophe for $Label. AxMath 2.7.0.58 canonical first-prime syntax is \prime."
   }

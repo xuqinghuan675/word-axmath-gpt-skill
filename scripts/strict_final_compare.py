@@ -122,6 +122,7 @@ def compare(
     numbering_scope: str = "preserve",
     internal_audit: Path | None = None,
     source_internal_audit: Path | None = None,
+    formula_map: Path | None = None,
 ) -> dict:
     source_docx = source_docx.resolve()
     final_docx = final_docx.resolve()
@@ -157,6 +158,7 @@ def compare(
         source_docx,
         final_docx,
         internal_audit,
+        formula_map=formula_map,
         source_internal_audit=source_internal_audit,
         repair_ledger=repair_ledger,
     )
@@ -221,6 +223,8 @@ def compare(
         "final_axmath_count": len(final_formulas),
         "internal_audit": str(internal_audit),
         "internal_audit_sha256": internal_state["audit_sha256"],
+        "formula_map": math_layout_state.get("formula_map"),
+        "formula_map_sha256": math_layout_state.get("formula_map_sha256"),
         "internal_audit_pass": internal_state["passed"] and len(final_formulas) == expected_internal_count,
         "math_layout_contract": math_layout_state,
         "math_layout_contract_pass": math_layout_state["passed"],
@@ -258,12 +262,7 @@ def compare(
     }
 
     report["formula_count_contract_ok"] = bool(
-        report["formula_count_equal"]
-        or (
-            repair_ledger_ok
-            and int(repair_ledger_report.get("expected_candidate_axmath") or -1)
-            == len(final_formulas)
-        )
+        report["math_layout_contract"].get("mapping_pass")
     )
     report["paragraph_contract_ok"] = bool(
         report["paragraph_count_equal"]
@@ -285,19 +284,38 @@ def compare(
             )
         )
     )
+    mapping_rows = report["math_layout_contract"].get("source_final_mapping") or []
+    one_to_one_mapping = bool(
+        report["math_layout_contract"].get("mapping_pass")
+        and int(report["math_layout_contract"].get("additional_target_count") or 0) == 0
+        and all(len(row.get("final_ordinals") or []) == 1 for row in mapping_rows)
+    )
     report["alignment_correspondence_mode"] = (
-        "ordinal"
-        if report["formula_count_equal"]
+        "source_final_map"
+        if one_to_one_mapping
         else (
-            "visual_only_due_validated_layout_split"
-            if repair_ledger_ok
+            "visual_only_due_validated_formula_map"
+            if report["math_layout_contract"].get("mapping_pass")
             else "unavailable"
         )
     )
 
-    if report["alignment_correspondence_mode"] == "ordinal":
-        for src, fin in zip(source_formulas, final_formulas):
-            ordinal = int(src.get("ordinal") or 0)
+    if report["alignment_correspondence_mode"] == "source_final_map":
+        source_by_ordinal = {
+            int(row.get("ordinal") or 0): row for row in source_formulas
+        }
+        final_by_ordinal = {
+            int(row.get("ordinal") or 0): row for row in final_formulas
+        }
+        for mapping in mapping_rows:
+            source_ordinal = int(mapping["source_ordinal"])
+            final_ordinals = list(mapping.get("final_ordinals") or [])
+            if len(final_ordinals) != 1:
+                continue
+            src = source_by_ordinal.get(source_ordinal)
+            fin = final_by_ordinal.get(int(final_ordinals[0]))
+            if src is None or fin is None:
+                continue
             source_fmt = src.get("paragraph_format") or {}
             final_fmt = fin.get("paragraph_format") or {}
             source_alignment = source_fmt.get("alignment")
@@ -309,7 +327,7 @@ def compare(
                 and int(source_alignment) != int(final_alignment)
             ):
                 rec = {
-                    "ordinal": ordinal,
+                    "ordinal": source_ordinal,
                     "source_page": src.get("page"),
                     "final_page": fin.get("page"),
                     "source_alignment": source_alignment,
@@ -326,7 +344,7 @@ def compare(
                     delta = abs(fin_center - src_center)
                     if delta > center_tolerance_pt:
                         report["center_position_breaks"].append({
-                            "ordinal": ordinal,
+                            "ordinal": source_ordinal,
                             "source_page": src.get("page"),
                             "final_page": fin.get("page"),
                             "source_center_x_pt": src_center,
@@ -402,6 +420,7 @@ def main() -> int:
     ap.add_argument("--outdir", required=True)
     ap.add_argument("--expected-source-sha256", required=True)
     ap.add_argument("--internal-audit", required=True, help="Complete hash-bound -AllAxMath export from inspect_axmath_tex.ps1.")
+    ap.add_argument("--formula-map", required=True, help="Hash-bound source-to-final AxMath formula mapping manifest.")
     ap.add_argument("--source-internal-audit", help="Required read-only -AllAxMath baseline when the frozen source already contains AxMath OLEs.")
     ap.add_argument("--center-tolerance-pt", type=float, default=3.0)
     ap.add_argument(
@@ -421,6 +440,7 @@ def main() -> int:
         args.numbering_scope,
         Path(args.internal_audit),
         Path(args.source_internal_audit) if args.source_internal_audit else None,
+        Path(args.formula_map),
     )
     print(json.dumps({
         "hard_content_pass": report["hard_content_pass"],

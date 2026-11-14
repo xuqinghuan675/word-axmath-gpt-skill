@@ -57,44 +57,15 @@ _OMML_FUSED_PRIME_EXP_RE = re.compile(
 )
 _FUSED_PRIME_TOKEN_RE = re.compile(r"\\prime(?=[A-Za-z0-9])")
 
-# Explicitly position lower/upper limits under/over the lim operator.
-# Do not match longer commands such as \limsup or \liminf.
-_LIMIT_SCRIPT_RE = re.compile(
-    r"\\lim(?![A-Za-z])(?P<gap>\s*)"
-    r"(?P<placement>\\(?:no)?limits)?(?P<post_gap>\s*)"
-    r"(?P<script>[_^])"
-)
-
-
-def normalize_limit_operator_placement(tex: str) -> str:
-    """Force every scripted lim operator to use explicit TeX limit placement."""
-    def repl(match: re.Match[str]) -> str:
-        return r"\lim\limits" + match.group("script")
-
-    return _LIMIT_SCRIPT_RE.sub(repl, str(tex))
-
-
-def limit_operator_issues(tex: str) -> list[str]:
-    """Return hard layout-contract defects for lower/upper lim scripts."""
-    issues = [
-        "limit_script_not_forced_under_over"
-        for match in _LIMIT_SCRIPT_RE.finditer(str(tex))
-        if match.group("placement") != r"\limits"
-    ]
-    return sorted(set(issues))
-
-
-def limit_operator_count(tex: str) -> int:
-    """Count lim operators carrying a lower or upper script."""
-    return len(list(_LIMIT_SCRIPT_RE.finditer(str(tex))))
-
-
-def _consume_tex_argument(value: str, position: int) -> int:
+def _read_tex_argument(value: str, position: int) -> tuple[str, str, int, int, int]:
+    """Read one TeX argument: content, raw text, start, content start, end."""
     while position < len(value) and value[position].isspace():
         position += 1
+    start = position
     if position >= len(value):
-        return position
+        return "", "", start, start, start
     if value[position] == "{":
+        content_start = position + 1
         depth = 1
         position += 1
         while position < len(value) and depth:
@@ -106,35 +77,136 @@ def _consume_tex_argument(value: str, position: int) -> int:
             elif value[position] == "}":
                 depth -= 1
             position += 1
-        return position
+        content_end = position - 1 if depth == 0 else position
+        return value[content_start:content_end], value[start:position], start, content_start, position
     if value[position] == "\\":
         match = re.match(r"\\[A-Za-z]+|\\.", value[position:])
-        return position + (len(match.group(0)) if match else 1)
-    return position + 1
+        end = position + (len(match.group(0)) if match else 1)
+        return value[position:end], value[position:end], start, position, end
+    end = position + 1
+    return value[position:end], value[position:end], start, position, end
+
+
+def _underset_lim_wrappers(value: str) -> dict[int, dict]:
+    wrappers: dict[int, dict] = {}
+    for match in re.finditer(r"\\underset(?![A-Za-z])", value):
+        lower, _, _, _, after_lower = _read_tex_argument(value, match.end())
+        base, _, _, base_content_start, after_base = _read_tex_argument(value, after_lower)
+        if base.strip() != r"\lim":
+            continue
+        lim_offset = base.find(r"\lim")
+        wrappers[base_content_start + lim_offset] = {
+            "lower": lower.strip(),
+            "end": after_base,
+        }
+    return wrappers
+
+
+def _parse_lim_scripts(value: str, position: int) -> tuple[list[dict], int, bool]:
+    while position < len(value) and value[position].isspace():
+        position += 1
+    placement = re.match(r"\\(?:no)?limits(?![A-Za-z])", value[position:])
+    had_placement = placement is not None
+    if placement:
+        position += len(placement.group(0))
+    scripts: list[dict] = []
+    while True:
+        while position < len(value) and value[position].isspace():
+            position += 1
+        if position >= len(value) or value[position] not in "_^":
+            break
+        marker = value[position]
+        content, raw, start, _, end = _read_tex_argument(value, position + 1)
+        if end <= position + 1:
+            break
+        scripts.append({
+            "marker": marker,
+            "content": content.strip(),
+            "raw": raw,
+            "start": start,
+            "end": end,
+        })
+        position = end
+    return scripts, position, had_placement
+
+
+def normalize_limit_operator_placement(tex: str) -> str:
+    """Encode a lower lim script with underset, which survives AxMath export."""
+    value = str(tex)
+    wrappers = _underset_lim_wrappers(value)
+    matches = list(re.finditer(r"\\lim(?![A-Za-z])", value))
+    for match in reversed(matches):
+        if match.start() in wrappers:
+            continue
+        scripts, end, had_placement = _parse_lim_scripts(value, match.end())
+        lower = next((x for x in scripts if x["marker"] == "_"), None)
+        upper = next((x for x in scripts if x["marker"] == "^"), None)
+        if lower is None and upper is None and not had_placement:
+            continue
+        if lower is not None:
+            replacement = r"\underset{" + lower["content"] + r"}{\lim}"
+            if upper is not None:
+                replacement += "^{" + upper["content"] + "}"
+        elif upper is not None:
+            replacement = r"\lim^{" + upper["content"] + "}"
+        else:
+            replacement = r"\lim"
+        value = value[:match.start()] + replacement + value[end:]
+    return value
+
+
+def limit_operator_issues(tex: str) -> list[str]:
+    """Require lower lim scripts to use the AxMath-stable underset form."""
+    value = str(tex)
+    wrappers = _underset_lim_wrappers(value)
+    issues: list[str] = []
+    for match in re.finditer(r"\\lim(?![A-Za-z])", value):
+        wrapper = wrappers.get(match.start())
+        if wrapper is not None:
+            if not wrapper["lower"]:
+                issues.append("empty_underset_lim")
+            scripts, _, had_placement = _parse_lim_scripts(value, wrapper["end"])
+            if had_placement:
+                issues.append("lim_limits_command_not_allowed")
+            if any(x["marker"] == "_" for x in scripts):
+                issues.append("duplicate_lim_subscript")
+            continue
+        scripts, _, had_placement = _parse_lim_scripts(value, match.end())
+        if had_placement:
+            issues.append("lim_limits_command_not_allowed")
+        if any(x["marker"] == "_" for x in scripts):
+            issues.append("lim_subscript_requires_underset")
+    return sorted(set(issues))
+
+
+def limit_operator_count(tex: str) -> int:
+    """Count lim operators carrying a lower or upper script."""
+    return len(limit_operator_placements(tex))
 
 
 def limit_operator_placements(tex: str) -> list[list[str]]:
-    """Return each scripted lim operator's ordered lower/upper script directions."""
+    """Return each scripted lim operator's ordered lower/upper directions."""
     value = str(tex)
+    wrappers = _underset_lim_wrappers(value)
     placements: list[list[str]] = []
     for match in re.finditer(r"\\lim(?![A-Za-z])", value):
-        position = match.end()
-        while position < len(value) and value[position].isspace():
-            position += 1
-        placement_command = re.match(r"\\(?:no)?limits(?![A-Za-z])", value[position:])
-        if placement_command:
-            position += len(placement_command.group(0))
-        current: list[str] = []
-        for _ in range(2):
-            while position < len(value) and value[position].isspace():
-                position += 1
-            if position >= len(value) or value[position] not in "_^":
-                break
-            current.append("below" if value[position] == "_" else "above")
-            position = _consume_tex_argument(value, position + 1)
+        wrapper = wrappers.get(match.start())
+        if wrapper is not None:
+            current = ["below"] if wrapper["lower"] else []
+            scripts, _, _ = _parse_lim_scripts(value, wrapper["end"])
+        else:
+            current = []
+            scripts, _, _ = _parse_lim_scripts(value, match.end())
+        current.extend("below" if x["marker"] == "_" else "above" for x in scripts)
         if current:
             placements.append(current)
     return placements
+
+
+def smallint_issues(tex: str) -> list[str]:
+    """The AxMath output contract uses \\int; \\smallint is forbidden."""
+    return ["smallint_forbidden"] if re.search(r"\\smallint(?![A-Za-z])", str(tex)) else []
+
 
 
 def _normalize_omml_fused_prime_exponent(tex: str) -> str:
@@ -234,6 +306,7 @@ def _group_primed_atom_before_exponent(tex: str) -> str:
 
 def normalize_axmath_tex(tex: str) -> str:
     value = normalize_limit_operator_placement(str(tex))
+    value = re.sub(r"\\smallint(?![A-Za-z])", r"\\int", value)
     value = _canonicalize_prime_tokens(value)
 
     # U+2057 QUADRUPLE PRIME is intentionally not auto-normalized.  The

@@ -79,6 +79,36 @@ def _complete_internal_audit(path: Path, docx: Path) -> Path:
     return path
 
 
+
+def _formula_map(path: Path, source: Path, final: Path) -> Path:
+    # Even when legacy OLE blocks the final document, the actual AxMath
+    # formula still needs one complete source-to-final mapping.
+    payload = {
+        "schema": "axmath-source-final-map/v1",
+        "source": {
+            "path": str(source.resolve()),
+            "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+            "formula_count": 1,
+            "formula_kind": "officemath",
+        },
+        "final": {
+            "path": str(final.resolve()),
+            "sha256": hashlib.sha256(final.read_bytes()).hexdigest(),
+            "axmath_count": 1,
+        },
+        "targets": [{
+            "target_id": "SRC-0001",
+            "kind": "source_formula",
+            "source_ordinal": 1,
+            "source_anchor": "First OMML formula in frozen source paragraph",
+            "expected_tex": "$x+y$",
+            "final_ordinals": [1],
+        }],
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
@@ -153,6 +183,7 @@ def main() -> int:
             failed = strict_final_compare.compare(
                 clean, working, root / "strict-fail", source_sha,
                 internal_audit=_complete_internal_audit(root / "working-internal.json", working),
+                formula_map=_formula_map(root / "working-formula-map.json", clean, working),
             )
             assert not failed["hard_content_pass"], failed
             assert failed["final_non_axmath_ole_count"] == 1
@@ -160,6 +191,7 @@ def main() -> int:
             clean_final = strict_final_compare.compare(
                 clean, removed_legacy, root / "strict-clean", source_sha,
                 internal_audit=_complete_internal_audit(root / "clean-internal.json", removed_legacy),
+                formula_map=_formula_map(root / "clean-formula-map.json", clean, removed_legacy),
             )
             assert clean_final["final_non_axmath_ole_count"] == 0
             assert clean_final["hard_content_pass"], clean_final

@@ -74,9 +74,9 @@ def test_skill_routes_and_contract() -> None:
     assert "docs/NUMBERING_AND_OUTLINE.md" in skill
     assert "NUMBERING_AND_OUTLINE.md" in layout
     for phrase in (
-        "普通文本",
-        "同一级编号使用一致的左缩进",
-        "保留不同层级的原有视觉缩进差异",
+        "普通文字",
+        "同级编号统一左缩进",
+        "保留不同层级原有的视觉缩进差异",
         "w:outlineLvl",
         "PlainTextStyle1",
         "basedOn",
