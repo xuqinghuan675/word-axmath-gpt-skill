@@ -68,6 +68,12 @@ def main() -> int:
     skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
     math_reference_path = ROOT / "docs" / "MATH_LAYOUT_REFERENCE.md"
     math_reference = math_reference_path.read_text(encoding="utf-8") if math_reference_path.is_file() else ""
+    numbering_contract_path = ROOT / "docs" / "NUMBERING_AND_OUTLINE.md"
+    numbering_contract = numbering_contract_path.read_text(encoding="utf-8") if numbering_contract_path.is_file() else ""
+    conversion_workflow_path = ROOT / "docs" / "AXMATH_CONVERSION_WORKFLOW.md"
+    conversion_workflow = conversion_workflow_path.read_text(encoding="utf-8") if conversion_workflow_path.is_file() else ""
+    background_path = ROOT / "docs" / "TECHNICAL_BACKGROUND.md"
+    background = background_path.read_text(encoding="utf-8") if background_path.is_file() else ""
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
     one_click = (SCRIPTS / "one_click_convert.py").read_text(encoding="utf-8")
@@ -105,16 +111,34 @@ def main() -> int:
     strict = (SCRIPTS / "strict_final_compare.py").read_text(encoding="utf-8")
     finalizer = (SCRIPTS / "finalize_visual_review.py").read_text(encoding="utf-8")
 
-    # New-chat hard entry and deterministic state machine.
+    # The main Skill is now a short router; enforce the safety contracts in
+    # their authoritative destination files without weakening the checks.
     require(
         skill,
         [
-            "A new chat must read this file",
+            "每次新任务先读本文件",
+            "docs/NUMBERING_AND_OUTLINE.md",
+            "docs/MATH_LAYOUT_REFERENCE.md",
+            "docs/MINERU_API.md",
+            "docs/AXMATH_CONVERSION_WORKFLOW.md",
+            "docs/CODEX_DIRECT.md",
+            "docs/REPAIR_REFERENCE.md",
+            "NEXT_ACTION.json",
+            "Heading",
+            "普通文字",
+            "WPS",
+        ],
+        "SKILL.md",
+        errors,
+    )
+    require(
+        conversion_workflow,
+        [
             "Mandatory entry protocol",
             "diagnose_after_conversion.py",
             "NEXT_ACTION.json",
             "M1_MULTISIBLING_OMATHPARA",
-            "M2_SOURCE_VISUAL_WRAP_LOSS" if "M2_SOURCE_VISUAL_WRAP_LOSS" in skill else "M2 — source visual wrap",
+            "M2_SOURCE_VISUAL_WRAP_LOSS",
             "M2-B",
             "inspect_axmath_tex.ps1",
             "source-reading from AxMath mutation",
@@ -124,17 +148,34 @@ def main() -> int:
             "\\limits",
             "冻结来源",
         ],
-        "SKILL.md",
+        "docs/AXMATH_CONVERSION_WORKFLOW.md",
+        errors,
+    )
+    require(
+        numbering_contract,
+        [
+            "同一级编号",
+            "不同层级",
+            "普通文本",
+            "Heading",
+            "PlainTextStyle1",
+            "w:outlineLvl",
+            "w:pStyle",
+            "basedOn",
+            "next",
+            "link",
+            "Word 和 WPS",
+        ],
+        "docs/NUMBERING_AND_OUTLINE.md",
         errors,
     )
     require(
         math_reference,
         [
-            "AxMath 公式结构与内部 TeX 防错门禁",
-            "下标必须在正下方",
-            "导数撇号按阶数保留",
-            "math_layout_contract.py validate",
-            "冻结来源",
+            "NUMBERING_AND_OUTLINE.md",
+            "AXMATH_CONVERSION_WORKFLOW.md",
+            "留白与分页",
+            "逐题逐页验收",
         ],
         "docs/MATH_LAYOUT_REFERENCE.md",
         errors,
@@ -142,14 +183,21 @@ def main() -> int:
     require(
         readme,
         [
+            "SKILL.md",
+            "NUMBERING_AND_OUTLINE.md",
+            "MATH_LAYOUT_REFERENCE.md",
+            "AXMATH_CONVERSION_WORKFLOW.md",
             "diagnose_after_conversion.py",
-            "known_multisibling_collapse",
-            "超长公式",
-            "M2-B：按原稿视觉数学行恢复多个 AxMath",
-            "inspect_axmath_tex.ps1",
-            "99.02%",
         ],
         "README.md",
+        errors,
+    )
+    require(
+        background,
+        ["known_multisibling_collapse", "超长公式",
+         "M2-B：按原稿视觉数学行恢复多个 AxMath",
+         "inspect_axmath_tex.ps1", "99.02%"],
+        "docs/TECHNICAL_BACKGROUND.md",
         errors,
     )
 

@@ -58,10 +58,10 @@ def read_json(path: Path) -> dict:
 
 def load_token() -> str:
     if not TOKEN_PATH.is_file():
-        raise MinerUError("未找到 GPT 专属 MinerU Token 文件：" + str(TOKEN_PATH))
+        raise MinerUError("未找到本机专用 MinerU Token 文件：" + str(TOKEN_PATH))
     token = TOKEN_PATH.read_text(encoding="utf-8-sig").strip()
     if not token or any(ch.isspace() for ch in token):
-        raise MinerUError("GPT 专属 MinerU Token 文件为空或格式异常。")
+        raise MinerUError("本机专用 MinerU Token 文件为空或格式异常。")
     return token
 
 
@@ -170,7 +170,7 @@ def submit_task(pdf: Path, manifest_path: Path, manifest: dict, session: request
     message = (result.get("msg") or result.get("message") or response.reason) if isinstance(result, dict) else response.reason
     if response.status_code in (401, 403) or str(code) in ("A0202", "A0211"):
         save_manifest(manifest_path, manifest, state="submit_failed", api_code=code)
-        raise MinerUError(f"MinerU 认证失败：HTTP {response.status_code} / {code}。检查本机 GPT 专属 Token 文件。")
+        raise MinerUError(f"MinerU 认证失败：HTTP {response.status_code} / {code}。检查本机 MinerU Token 文件。")
     if not response.ok or not isinstance(result, dict) or str(code) != "0":
         save_manifest(manifest_path, manifest, state="submit_failed",
                       http_status=response.status_code, api_code=code, api_message=str(message)[:500])
@@ -525,7 +525,7 @@ def run_status(args) -> int:
 
 def make_parser():
     parser = argparse.ArgumentParser(
-        description="GPT 专属 MinerU Precision API：本地 PDF → 原始可编辑 DOCX + 完整 ZIP。"
+        description="MinerU Precision API：本地 PDF → 原始可编辑 DOCX + 完整 ZIP。"
     )
     sub = parser.add_subparsers(dest="command", required=True)
     parse = sub.add_parser("parse", help="首次提交或恢复同一 MinerU 任务")

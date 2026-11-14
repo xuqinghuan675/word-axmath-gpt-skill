@@ -1,9 +1,17 @@
 # Changelog
 
-## Unreleased (2026-11-13 MinerU GPT-only entry)
+## Unreleased (2026-11-14 numbering and Skill routing)
+
+- Route numbered math exercises and non-collapsible headings to one canonical, first-pass contract with Word/WPS acceptance.
+- Detect Heading style identity even with outline level 9, plus basedOn/next/link referrals; add focused regression fixtures.
+- Shorten the main SKILL and README; move the original conversion state machine intact to docs/AXMATH_CONVERSION_WORKFLOW.md, and preserve previous README as historical reference.
+- Keep the existing MinerU GPT/API and Codex browser-first/fallback behavior.
+
+
+## Unreleased (2026-11-13 MinerU GPT direct / Codex browser fallback)
 
 - Add a single MinerU Precision API entry for local PDFs, including resumable batch polling, raw ZIP preservation, safe extraction and DOCX handoff into the existing AxMath pipeline.
-- Store the GPT-only MinerU API token in an ignored local secrets directory; Codex is explicitly denied by default and requires task-scoped user authorization.
+- Keep the MinerU API token in the ignored local secrets directory; GPT can call the API directly on the local machine, while Codex uses its own logged-in conversation sidebar first and switches to the local API only for long web queues or a stalled front end.
 - Add a problem-to-file routing table and document the official API request/status flow.
 
 ## Unreleased (2026-11-12 AxMath formula structure gate)

@@ -1,4 +1,4 @@
-# MinerU API 入口（GPT 专用）
+# MinerU API 入口（GPT 直连 / Codex 网页长队列备用）
 
 ## 唯一命令
 
@@ -22,10 +22,11 @@
 
 ## Token 与权限
 
-- GPT 专属 Token 只保存在本机 secrets\mineru_token.txt，由脚本读取；不放在 SKILL.md、README、命令行、环境变量或任务 JSON。
+- 专用 Token 只保存在本机 secrets\mineru_token.txt，由脚本读取；不放在 SKILL.md、README、命令行、环境变量或任务 JSON。
 - .gitignore 已忽略整个 secrets\ 目录。绝不提交、push、复制到共享目录或输出 Token。
-- Codex 默认禁止读取 secrets\mineru_token.txt、执行 scripts\mineru_api.py 或使用这个 Token。只有用户在当前任务提示词里明确写明允许 Codex 使用本机 MinerU Token，才可在该任务范围内使用；授权不自动延续到其他任务。
-- 未获授权的 Codex 应停在 MinerU 步骤，等待 GPT 提供 mineru_original.docx 和 mineru_ready.json 后再继续 AxMath 转换。
+- **GPT 路线：** 在本机执行时可直接调用本 API 生成 MinerU DOCX。
+- **Codex 路线：** 先使用当前 Codex 对话自己的侧边栏浏览器和已登录的 MinerU 网页，不需要 Token。网页预计排队超过 120 秒、连续 60 秒无进展或前端卡住时，用户已明确授权 Codex 在本机调用本 API 作为 PDF → DOCX 备用通道。
+- Codex 的授权只限 MinerU PDF → DOCX 阶段，不延伸到 AxMath 转换阶段或其他任务；若当前任务提示词明确禁止 Token，必须遵守。不得把 Token 写入提示词、命令行参数、日志、Git、共享文件或输出。
 
 ## API 固定流程
 

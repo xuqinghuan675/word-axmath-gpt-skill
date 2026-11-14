@@ -1,12 +1,15 @@
 # Codex 本地直连 AxMath（不经过网页电脑插件）
 
-## MinerU GPT 专属 Token 权限（强制）
+## MinerU PDF → DOCX：网页优先，长队列切本机 API
 
-Codex 默认**禁止**读取 D:\CHATGPT\skills\word-axmath-gpt-skill\secrets\mineru_token.txt，禁止运行 scripts\mineru_api.py，也禁止用该 Token 调用 MinerU API。只有用户在**当前任务提示词**中明确授权“允许 Codex 使用本机 MinerU Token”时，才可在该任务范围内使用；授权不跨任务延续。不得把 Token 写入提示词、命令行参数、日志、Git、共享文件或输出。
+1. Codex 先使用**当前 Codex 对话自己的侧边栏浏览器**打开已经登录的 MinerU 网页，直接上传 PDF 并导出 DOCX；这一步不需要 API 或 Token。不要另开未登录的浏览器会话。
+2. 网页预计排队超过 **120 秒**、状态连续 **60 秒没有进展**，或前端卡住时，不继续等网页。用户已明确授权 Codex 在本机运行 scripts\mineru_api.py，使用本机 secrets\mineru_token.txt 调用同一个 MinerU Precision API 作为 PDF → DOCX 备用通道。
+3. GPT 在本机执行时可直接调用该 API；Codex 的备用授权仅适用于 MinerU PDF → DOCX 阶段，不延伸到 AxMath 转换阶段或其他任务。若当前任务提示词明确禁止 Token，必须遵守。
+4. 两条路线都输出 mineru_original.docx。随后 Codex 只处理该 DOCX，从 AxMath 的 inspect / convert / resume / diagnose 主链开始，不再使用 MinerU Token。
 
-未获授权时，Codex 只处理已由 GPT 生成的 mineru_original.docx，从 AxMath 的 inspect / convert / resume / diagnose 主链开始。MinerU API 入口和故障处理见 docs\MINERU_API.md。
+Token 不得写入提示词、命令行参数、日志、Git、共享文件或输出。API 入口和故障处理见 docs\MINERU_API.md。
 
-仓库根目录的 axmath.py 是对现有权威 Python 脚本的轻量入口。**Codex 使用自己运行所在 Windows 电脑的终端、Python、PowerShell、Microsoft Word COM 和 AxMath，完全不调用 thirteenthy / Qinghuan PC 1**，也不需要网页 ChatGPT 连接器的租约。
+仓库根目录的 axmath.py 是对现有权威 Python 脚本的轻量入口。**MinerU 网页阶段使用当前 Codex 对话自己的侧边栏浏览器；DOCX 交付后，AxMath 转换阶段使用 Codex 自己运行所在 Windows 电脑的终端、Python、PowerShell、Microsoft Word COM 和 AxMath，完全不调用 thirteenthy / Qinghuan PC 1，也不需要网页插件租约。**
 
 - 十三月电脑：D:\CHATGPT\skills\word-axmath-gpt-skill
 - 清欢电脑：D:\work\axmath\word-axmath-gpt-skill（已部署本地入口）
@@ -17,7 +20,7 @@ Codex 默认**禁止**读取 D:\CHATGPT\skills\word-axmath-gpt-skill\secrets\min
 
 在相应电脑的 Skill 仓库根目录运行，也可从其他目录以 axmath.py 的绝对路径运行。以下尖括号仅为占位符，真实路径必须取自现场 JSON。
 
-先按 `SKILL.md` 和 `MATH_LAYOUT_REFERENCE.md` 确认题号、公式工具及交付限制。转换及后续核查默认 `--numbering-scope preserve`，不会改题号标点；若选择其他策略，各阶段须保持一致，`line-start` 会把行首 `（1）、` 改为 `（1）.`。下列第 5、6 步只适用于允许生成 PDF 的任务：`compare` 会导出临时 PDF。仅交 Word 或禁止 PDF 时跳过这两条，按 `SKILL.md` 的 Word 页面视图分支完成核查并准确报告。
+先按 `SKILL.md`、`MATH_LAYOUT_REFERENCE.md` 和 `NUMBERING_AND_OUTLINE.md` 确认题号、普通样式、编号对齐及交付限制。转换及后续核查默认 `--numbering-scope preserve`，不会改题号标点；若选择其他策略，各阶段须保持一致，`line-start` 会把行首 `（1）、` 改为 `（1）.`。下列第 5、6 步只适用于允许生成 PDF 的任务：`compare` 会导出临时 PDF。仅交 Word 或禁止 PDF 时跳过这两条，按 `docs/AXMATH_CONVERSION_WORKFLOW.md` 的 Word 页面视图分支完成核查并准确报告。
 
     # 1. 原稿只读预检
     python .\axmath.py inspect --input "D:\任务\原稿.docx"

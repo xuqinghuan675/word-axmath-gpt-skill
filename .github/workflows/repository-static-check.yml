@@ -23,6 +23,7 @@ jobs:
         run: |
           python -m compileall -q scripts
           python scripts/test_numbering_punctuation.py
+          python scripts/test_numbering_contract.py
           python scripts/test_question_numbering_inventory.py
           python scripts/test_page_style_and_semantics.py
           python scripts/test_display_alignment.py

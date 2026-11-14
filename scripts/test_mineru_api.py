@@ -2,6 +2,8 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
+import json
 import zipfile
 from types import SimpleNamespace
 import pymupdf
@@ -55,6 +57,17 @@ class MinerUApiTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(mineru_api.MinerUError, "请求结果不确定"):
                 mineru_api.run_parse(args)
+
+    def test_token_is_read_from_local_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            token_file = Path(temp) / "mineru_token.txt"
+            token_file.write_text("test-token-only", encoding="utf-8")
+            with mock.patch.object(mineru_api, "TOKEN_PATH", token_file):
+                self.assertEqual(mineru_api.load_token(), "test-token-only")
+
+    def test_token_value_is_not_in_batch_payload(self):
+        payload = mineru_api.build_payload(Path("math.pdf"), "b" * 32, "vlm")
+        self.assertNotIn("test-token-only", json.dumps(payload))
 
     def test_zip_slip_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
